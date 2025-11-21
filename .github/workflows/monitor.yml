@@ -26,13 +26,16 @@ jobs:
           CHROME_VERSION=$(google-chrome-stable --version | sed 's/Google Chrome \(.*\)/\1/' | cut -d '.' -f 1,2,3)
           echo "Chrome version: $CHROME_VERSION"
 
-          # 嘗試下載對應的 ChromeDriver 版本
+          # 嘗試直接使用主版本號來下載對應版本的 ChromeDriver
           CHROMEDRIVER_VERSION=$(curl -sS chromedriver.storage.googleapis.com/LATEST_RELEASE_$CHROME_VERSION)
           echo "ChromeDriver version: $CHROMEDRIVER_VERSION"
 
           # 如果成功獲取到版本，則下載對應的 ChromeDriver
           if [ -n "$CHROMEDRIVER_VERSION" ]; then
-            wget https://chromedriver.storage.googleapis.com/$CHROMEDRIVER_VERSION/chromedriver_linux64.zip
+            # 正確的下載 URL
+            CHROMEDRIVER_URL="https://chromedriver.storage.googleapis.com/$CHROMEDRIVER_VERSION/chromedriver_linux64.zip"
+            echo "Downloading ChromeDriver from: $CHROMEDRIVER_URL"
+            wget $CHROMEDRIVER_URL
             unzip chromedriver_linux64.zip
             sudo mv chromedriver /usr/local/bin/
           else
