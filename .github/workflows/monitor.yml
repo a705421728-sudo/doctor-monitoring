@@ -22,11 +22,11 @@ jobs:
           sudo dpkg -i google-chrome-stable_current_amd64.deb
           sudo apt --fix-broken install -y  # 安裝缺失的依賴
 
-          # 獲取當前安裝的 Chrome 版本
-          CHROME_VERSION=$(google-chrome-stable --version | sed 's/Google Chrome //')
+          # 獲取當前安裝的 Chrome 版本（僅主版本號）
+          CHROME_VERSION=$(google-chrome-stable --version | sed 's/Google Chrome \(.*\)/\1/' | cut -d '.' -f 1,2,3)
           echo "Chrome version: $CHROME_VERSION"
 
-          # 獲取對應版本的 ChromeDriver
+          # 直接使用主版本號來下載對應版本的 ChromeDriver
           CHROMEDRIVER_VERSION=$(curl -sS chromedriver.storage.googleapis.com/LATEST_RELEASE_$CHROME_VERSION)
           echo "ChromeDriver version: $CHROMEDRIVER_VERSION"
 
