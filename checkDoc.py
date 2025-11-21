@@ -38,9 +38,11 @@ class DoctorMonitor:
         mapping = {}
         for url in self.urls:
             if 'DOC3208F' in url:
-                mapping['尤香玉'] = url            
+                mapping['尤香玉'] = url
+            """            
             elif 'DOC3491G' in url:
                 mapping['周建成'] = url
+            """
             
         return mapping
     
@@ -298,7 +300,7 @@ def main():
     config = {
         'urls': [
             'https://www6.vghtpe.gov.tw/reg/docTimetable.do?docid=DOC3208F',  # 尤香玉醫師
-            'https://www6.vghtpe.gov.tw/reg/docTimetable.do?docid=DOC3491G'   # 周建成醫師
+            #'https://www6.vghtpe.gov.tw/reg/docTimetable.do?docid=DOC3491G'   # 周建成醫師
         ],
         'email_config': {
             'smtp_server': 'smtp.gmail.com',      # 郵件服務器
