@@ -3,8 +3,8 @@ name: Run Doctor Monitor Script
 on:
   workflow_dispatch:  # 只允許手動觸發
   schedule:
-    # 每天早上8點和下午2點檢查（可選，根據需要調整）
-    - cron: '0 0,6 * * *'
+    # 每30分鐘檢查一次（可根據需要調整）
+    - cron: '*/30 * * * *'
 
 jobs:
   run_script:
@@ -15,36 +15,25 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      # 步驟2: 使用內建的 Chrome 並設置 ChromeDriver
+      # 步驟2: 設置 Chrome 和 ChromeDriver
       - name: Setup Chrome and ChromeDriver
-        run: |
-          # 驗證系統 Chrome 版本
-          echo "系統 Chrome 版本:"
-          google-chrome --version
-          # 安裝必要的依賴
-          sudo apt-get update
-          sudo apt-get install -y wget unzip
-
-      # 步驟3: 自動設置匹配的 ChromeDriver[citation:3]
-      - name: Setup ChromeDriver
-        uses: nanasess/setup-chromedriver@v2
+        uses: browser-actions/setup-chrome@v1
         with:
-          # 可選：指定特定版本，不指定則自動匹配
-          # chromedriver-version: '119.0.6045.105'
+          chrome-version: stable
 
-      # 步驟4: 設置 Python 環境
+      # 步驟3: 設置 Python 環境
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.8'
 
-      # 步驟5: 安裝依賴項
+      # 步驟4: 安裝依賴項
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # 步驟6: 運行 Python 腳本
+      # 步驟5: 運行 Python 腳本
       - name: Run doctor monitoring script
         run: |
           python checkDoc.py
