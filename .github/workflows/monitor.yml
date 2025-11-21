@@ -2,6 +2,9 @@ name: Run Doctor Monitor Script
 
 on:
   workflow_dispatch:  # 只允許手動觸發
+  schedule:
+    # 每5分鐘執行一次 (可選，如果你想要自動執行)
+    - cron: '*/5 * * * *'
 
 jobs:
   run_script:
@@ -12,50 +15,28 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      # 步驟2: 安裝特定版本的 Chrome 和 ChromeDriver
-      - name: Install Chrome and ChromeDriver
+      # 步驟2: 安裝 Chrome (讓 webdriver-manager 處理 ChromeDriver)
+      - name: Install Chrome
         run: |
-          # 安裝 Google Chrome
           sudo apt-get update -y
           sudo apt-get install -y wget
-          sudo wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
-          sudo dpkg -i google-chrome-stable_current_amd64.deb
-          sudo apt --fix-broken install -y  # 安裝缺失的依賴
-
-          # 獲取當前安裝的 Chrome 版本（僅主版本號）
-          CHROME_VERSION=$(google-chrome-stable --version | sed 's/Google Chrome \(.*\)/\1/' | cut -d '.' -f 1,2,3)
-          echo "Chrome version: $CHROME_VERSION"
-
-          # 嘗試直接使用主版本號來下載對應版本的 ChromeDriver
-          CHROMEDRIVER_VERSION=$(curl -sS chromedriver.storage.googleapis.com/LATEST_RELEASE_$CHROME_VERSION)
-          echo "ChromeDriver version: $CHROMEDRIVER_VERSION"
-
-          # 如果成功獲取到版本，則下載對應的 ChromeDriver
-          if [ -n "$CHROMEDRIVER_VERSION" ]; then
-            # 正確的下載 URL
-            CHROMEDRIVER_URL="https://chromedriver.storage.googleapis.com/$CHROMEDRIVER_VERSION/chromedriver_linux64.zip"
-            echo "Downloading ChromeDriver from: $CHROMEDRIVER_URL"
-            wget $CHROMEDRIVER_URL
-            unzip chromedriver_linux64.zip
-            sudo mv chromedriver /usr/local/bin/
-          else
-            echo "Failed to retrieve ChromeDriver version"
-            exit 1
-          fi
+          wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+          sudo dpkg -i google-chrome-stable_current_amd64.deb || true
+          sudo apt --fix-broken install -y
 
       # 步驟3: 設置 Python 環境
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.8'  # 選擇合適的 Python 版本
+          python-version: '3.8'
 
       # 步驟4: 安裝依賴項
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt  # 安裝 requirements.txt 中的依賴
+          pip install -r requirements.txt
 
       # 步驟5: 運行 Python 腳本
       - name: Run doctor monitoring script
         run: |
-          python checkDoc.py  # 運行你的監控腳本
+          python checkDoc.py
