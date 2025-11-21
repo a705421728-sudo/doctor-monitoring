@@ -12,19 +12,36 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      # 步驟2: 設置 Python 環境
+      # 步驟2: 安裝特定版本的 Chrome 和 ChromeDriver
+      - name: Install Chrome and ChromeDriver
+        run: |
+          # 安裝 Google Chrome
+          sudo apt-get update -y
+          sudo apt-get install -y wget
+          sudo wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+          sudo dpkg -i google-chrome-stable_current_amd64.deb
+          sudo apt --fix-broken install -y  # 安裝缺失的依賴
+
+          # 安裝對應版本的 ChromeDriver
+          CHROME_VERSION=$(google-chrome-stable --version | sed 's/Google Chrome //')
+          CHROMEDRIVER_VERSION=$(curl -sS chromedriver.storage.googleapis.com/LATEST_RELEASE_$CHROME_VERSION)
+          wget https://chromedriver.storage.googleapis.com/$CHROMEDRIVER_VERSION/chromedriver_linux64.zip
+          unzip chromedriver_linux64.zip
+          sudo mv chromedriver /usr/local/bin/
+
+      # 步驟3: 設置 Python 環境
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.8'  # 選擇合適的 Python 版本
 
-      # 步驟3: 安裝依賴項
+      # 步驟4: 安裝依賴項
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt  # 安裝 requirements.txt 中的依賴
 
-      # 步驟4: 運行 Python 腳本
+      # 步驟5: 運行 Python 腳本
       - name: Run doctor monitoring script
         run: |
           python checkDoc.py  # 運行你的監控腳本
