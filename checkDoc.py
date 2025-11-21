@@ -3,7 +3,6 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from webdriver_manager.chrome import ChromeDriverManager
 from selenium.webdriver.chrome.service import Service
 import smtplib
 from email.mime.text import MIMEText
@@ -12,6 +11,7 @@ import time
 import logging
 from datetime import datetime
 import sys
+import os
 
 # 配置日志
 logging.basicConfig(
@@ -59,16 +59,9 @@ class DoctorMonitor:
             chrome_options.add_argument('--headless')
             chrome_options.add_argument('--disable-extensions')
             chrome_options.add_argument('--disable-plugins')
-            # 移除 --disable-images 以確保頁面正常載入
             
-            # 添加更多穩定性選項[citation:6]
-            chrome_options.add_argument('--disable-gpu')
-            chrome_options.add_argument('--remote-debugging-port=9222')
-            
-            # 使用系統 ChromeDriver（由 setup-chromedriver Action 安裝）
-            from selenium.webdriver.chrome.service import Service
-            
-            # ChromeDriver 已經在 PATH 中，直接使用
+            # 在 GitHub Actions 中，Chrome 和 ChromeDriver 已經設置好
+            # 直接使用系統的 ChromeDriver
             service = Service()
             self.driver = webdriver.Chrome(service=service, options=chrome_options)
             
@@ -78,9 +71,6 @@ class DoctorMonitor:
             
         except Exception as e:
             logging.error(f"瀏覽器驅動初始化失敗: {e}")
-            # 添加詳細錯誤信息
-            import traceback
-            logging.error(traceback.format_exc())
             sys.exit(1)
     
     def parse_doctor_schedule(self, current_url):
@@ -278,13 +268,6 @@ class DoctorMonitor:
                         if self.email_config:
                             self.send_email_notification(available_slots)
                     
-                    """
-                        # 暫停一段時間避免重複提醒
-                        logging.info("暫停1800秒避免重複提醒")
-                        time.sleep(1800)
-                    else:
-                        logging.info("當前無可掛號時段，繼續監控")
-                    """
                     error_count = 0  # 重置錯誤計數
                     
                 except Exception as e:
@@ -314,8 +297,8 @@ def main():
     # 配置信息 - 支援多個收件人
     config = {
         'urls': [
-            'https://www6.vghtpe.gov.tw/reg/docTimetable.do?docid=DOC3208F'  # 尤香玉醫師
-            ,'https://www6.vghtpe.gov.tw/reg/docTimetable.do?docid=DOC3491G'   # 周建成醫師
+            'https://www6.vghtpe.gov.tw/reg/docTimetable.do?docid=DOC3208F',  # 尤香玉醫師
+            'https://www6.vghtpe.gov.tw/reg/docTimetable.do?docid=DOC3491G'   # 周建成醫師
         ],
         'email_config': {
             'smtp_server': 'smtp.gmail.com',      # 郵件服務器
@@ -326,9 +309,9 @@ def main():
                 'a705421728@gmail.com',
                 'anna73761103@gmail.com'
             ],
-            'password': 'gjeacilwxyrxukin'                   # 郵箱密碼或應用專用密碼
+            'password': 'gjeacilwxyrxukin'        # 郵箱密碼或應用專用密碼
         },
-        'check_interval': 60  # 檢查間隔（秒），默认5分鐘
+        'check_interval': 60  # 檢查間隔（秒）
     }
     
     # 創建監控器
