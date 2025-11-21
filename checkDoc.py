@@ -57,11 +57,13 @@ class DoctorMonitor:
             chrome_options.add_argument('--disable-dev-shm-usage')
             chrome_options.add_argument('--window-size=1920,1080')
             chrome_options.add_argument('--headless')
-            
-            # 添加更多穩定性選項
             chrome_options.add_argument('--disable-extensions')
             chrome_options.add_argument('--disable-plugins')
-            chrome_options.add_argument('--disable-images')
+            # 移除 --disable-images 以確保頁面正常載入
+            
+            # 使用 webdriver-manager 自動管理 ChromeDriver
+            from webdriver_manager.chrome import ChromeDriverManager
+            from selenium.webdriver.chrome.service import Service
             
             service = Service(ChromeDriverManager().install())
             self.driver = webdriver.Chrome(service=service, options=chrome_options)
