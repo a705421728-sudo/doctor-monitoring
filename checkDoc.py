@@ -49,7 +49,7 @@ class DoctorMonitor:
         try:
             chrome_options = Options()
             
-            chrome_options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
+            chrome_options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36')
             chrome_options.add_argument('--disable-blink-features=AutomationControlled')
             chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
             chrome_options.add_experimental_option('useAutomationExtension', False)
@@ -61,11 +61,15 @@ class DoctorMonitor:
             chrome_options.add_argument('--disable-plugins')
             # 移除 --disable-images 以確保頁面正常載入
             
-            # 使用 webdriver-manager 自動管理 ChromeDriver
-            from webdriver_manager.chrome import ChromeDriverManager
+            # 添加更多穩定性選項[citation:6]
+            chrome_options.add_argument('--disable-gpu')
+            chrome_options.add_argument('--remote-debugging-port=9222')
+            
+            # 使用系統 ChromeDriver（由 setup-chromedriver Action 安裝）
             from selenium.webdriver.chrome.service import Service
             
-            service = Service(ChromeDriverManager().install())
+            # ChromeDriver 已經在 PATH 中，直接使用
+            service = Service()
             self.driver = webdriver.Chrome(service=service, options=chrome_options)
             
             self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
@@ -74,6 +78,9 @@ class DoctorMonitor:
             
         except Exception as e:
             logging.error(f"瀏覽器驅動初始化失敗: {e}")
+            # 添加詳細錯誤信息
+            import traceback
+            logging.error(traceback.format_exc())
             sys.exit(1)
     
     def parse_doctor_schedule(self, current_url):
