@@ -1,0 +1,39 @@
+name: Run Doctor Monitor Script
+
+on:
+  workflow_dispatch:  # 只允許手動觸發
+  schedule:
+    # 每30分鐘檢查一次（可根據需要調整）
+    - cron: '*/30 * * * *'
+
+jobs:
+  run_script:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 步驟1: 檢出儲存庫的代碼
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      # 步驟2: 設置 Chrome 和 ChromeDriver
+      - name: Setup Chrome and ChromeDriver
+        uses: browser-actions/setup-chrome@v1
+        with:
+          chrome-version: stable
+
+      # 步驟3: 設置 Python 環境
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.8'
+
+      # 步驟4: 安裝依賴項
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # 步驟5: 運行 Python 腳本
+      - name: Run doctor monitoring script
+        run: |
+          python checkDoc.py
