@@ -2,9 +2,6 @@ name: Run Doctor Monitor Script
 
 on:
   workflow_dispatch:  # 只允許手動觸發
-  schedule:
-    # 每5分鐘執行一次 (可選，如果你想要自動執行)
-    - cron: '*/5 * * * *'
 
 jobs:
   run_script:
@@ -15,14 +12,20 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      # 步驟2: 安裝 Chrome (讓 webdriver-manager 處理 ChromeDriver)
+      # 步驟2: 安裝特定版本的 Chrome
       - name: Install Chrome
         run: |
           sudo apt-get update -y
           sudo apt-get install -y wget
-          wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
-          sudo dpkg -i google-chrome-stable_current_amd64.deb || true
+          
+          # 安裝特定穩定版本的 Chrome (119.0.6045.159)
+          wget -O google-chrome.deb "https://dl.google.com/linux/direct/google-chrome-stable_119.0.6045.159-1_amd64.deb"
+          sudo dpkg -i google-chrome.deb || true
           sudo apt --fix-broken install -y
+          
+          # 驗證安裝的版本
+          echo "Installed Chrome version:"
+          google-chrome --version
 
       # 步驟3: 設置 Python 環境
       - name: Set up Python
