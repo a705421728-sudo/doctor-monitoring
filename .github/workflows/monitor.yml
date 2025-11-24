@@ -1,14 +1,20 @@
 name: Run Doctor Monitor Script
 
 on:
-  workflow_dispatch:  # 只允許手動觸發
+  workflow_dispatch:  # 手動觸發
   schedule:
-    # 每30分鐘檢查一次（可根據需要調整）
-    - cron: '*/1 * * * *'
+    # 每5分鐘執行一次
+    - cron: '*/5 * * * *'
+
+# 添加併發控制，防止多個 workflow 同時運行
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   run_script:
     runs-on: ubuntu-latest
+    timeout-minutes: 5  # 設置超時時間
 
     steps:
       # 步驟1: 檢出儲存庫的代碼
