@@ -9,9 +9,10 @@ from email.mime.text import MIMEText
 from email.header import Header
 import time
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 import sys
 import os
+import json
 
 # 配置日志
 logging.basicConfig(
@@ -28,6 +29,7 @@ class DoctorMonitor:
         self.urls = urls if isinstance(urls, list) else [urls]
         self.email_config = email_config
         self.driver = None
+        self.state_file = 'monitor_state.json'  # 狀態文件
         self.setup_driver()
         
         # 建立醫師姓名與URL的對應關係
@@ -38,13 +40,51 @@ class DoctorMonitor:
         mapping = {}
         for url in self.urls:
             if 'DOC3208F' in url:
-                mapping['尤香玉'] = url
-            """            
+                mapping['尤香玉'] = url            
             elif 'DOC3491G' in url:
                 mapping['周建成'] = url
-            """
             
         return mapping
+    
+    def load_state(self):
+        """加載監控狀態"""
+        try:
+            if os.path.exists(self.state_file):
+                with open(self.state_file, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+        except Exception as e:
+            logging.warning(f"加載狀態文件失敗: {e}")
+        return {
+            'last_notification_time': None,
+            'pause_until': None,
+            'notification_count': 0
+        }
+    
+    def save_state(self, state):
+        """保存監控狀態"""
+        try:
+            with open(self.state_file, 'w', encoding='utf-8') as f:
+                json.dump(state, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logging.warning(f"保存狀態文件失敗: {e}")
+    
+    def should_skip_check(self):
+        """檢查是否需要跳過本次檢查（因為在暫停期）"""
+        state = self.load_state()
+        pause_until = state.get('pause_until')
+        
+        if pause_until:
+            pause_time = datetime.fromisoformat(pause_until)
+            if datetime.now() < pause_time:
+                remaining = (pause_time - datetime.now()).total_seconds() / 60
+                logging.info(f"在暫停期內，跳過檢查。剩餘暫停時間: {remaining:.1f} 分鐘")
+                return True
+            else:
+                # 暫停期已過，清除暫停狀態
+                state['pause_until'] = None
+                self.save_state(state)
+        
+        return False
     
     def setup_driver(self):
         """設置Chrome瀏覽器驅動"""
@@ -250,6 +290,11 @@ class DoctorMonitor:
     
     def monitor(self):
         """執行單次檢查"""
+        # 檢查是否需要跳過（在暫停期內）
+        if self.should_skip_check():
+            logging.info("在暫停期內，跳過本次檢查")
+            return "skipped"
+        
         logging.info(f"開始檢查醫師狀態")
         logging.info(f"監控網址: {', '.join(self.urls)}")
         
@@ -267,16 +312,31 @@ class DoctorMonitor:
                     success = self.send_email_notification(available_slots)
                     if success:
                         logging.info("郵件通知發送成功")
+                        
+                        # 設置暫停期 - 半小時內不再檢查
+                        state = self.load_state()
+                        pause_until = datetime.now() + timedelta(minutes=30)
+                        state['pause_until'] = pause_until.isoformat()
+                        state['last_notification_time'] = datetime.now().isoformat()
+                        state['notification_count'] = state.get('notification_count', 0) + 1
+                        self.save_state(state)
+                        
+                        logging.info(f"已設置暫停檢查直到: {pause_until.strftime('%Y-%m-%d %H:%M:%S')}")
+                        
+                        return "found_and_notified"
                     else:
                         logging.error("郵件通知發送失敗")
-                return True  # 發現可掛號時段
+                        return "found_but_notification_failed"
+                else:
+                    logging.warning("未配置郵件設定，無法發送通知")
+                    return "found_but_no_email_config"
             else:
                 logging.info("當前無可掛號時段")
-                return False  # 無可掛號時段
+                return "not_found"
                 
         except Exception as e:
             logging.error(f"檢查過程中出錯: {e}")
-            return False
+            return "error"
         finally:
             # 確保瀏覽器關閉
             if self.driver:
@@ -307,13 +367,20 @@ def main():
     monitor = DoctorMonitor(config['urls'], config['email_config'])
     
     # 執行單次檢查
-    found_available = monitor.monitor()
+    result = monitor.monitor()
     
-    # 根據檢查結果退出
-    if found_available:
-        sys.exit(0)  # 發現可掛號時段，正常退出
-    else:
-        sys.exit(0)  # 無可掛號時段，也正常退出
+    # 根據檢查結果記錄日誌
+    if result == "found_and_notified":
+        logging.info("✅ 發現可掛號時段並成功發送通知，已設置30分鐘暫停期")
+    elif result == "skipped":
+        logging.info("⏸️ 在暫停期內，跳過檢查")
+    elif result == "not_found":
+        logging.info("❌ 未發現可掛號時段")
+    elif result == "error":
+        logging.error("❌ 檢查過程中發生錯誤")
+    
+    # 正常退出
+    sys.exit(0)
 
 if __name__ == "__main__":
     main()
