@@ -344,23 +344,36 @@ class DoctorMonitor:
                 logging.info("瀏覽器已關閉")
 
 def main():
-    # 配置信息 - 支援多個收件人
+    # 從環境變量讀取郵件配置
+    email_config = {
+        'smtp_server': os.getenv('SMTP_SERVER'),
+        'smtp_port': int(os.getenv('SMTP_PORT', 465)),  # 默認端口 465
+        'from_email': os.getenv('SMTP_USERNAME'),
+        'to_email': [
+            'ben.liu@ennowell.com',
+            'a705421728@gmail.com',
+            'anna73761103@gmail.com'
+        ],
+        'password': os.getenv('SMTP_PASSWORD')
+    }
+    
+    # 驗證必要的環境變量是否存在
+    required_env_vars = ['SMTP_SERVER', 'SMTP_USERNAME', 'SMTP_PASSWORD']
+    missing_vars = [var for var in required_env_vars if not os.getenv(var)]
+    
+    if missing_vars:
+        logging.error(f"缺少必要的環境變量: {', '.join(missing_vars)}")
+        logging.error("請在 GitHub Secrets 中設置以下變量:")
+        logging.error("SMTP_SERVER, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD")
+        sys.exit(1)
+    
+    # 配置信息
     config = {
         'urls': [
             'https://www6.vghtpe.gov.tw/reg/docTimetable.do?docid=DOC3208F',  # 尤香玉醫師
             'https://www6.vghtpe.gov.tw/reg/docTimetable.do?docid=DOC3491G'   # 周建成醫師
         ],
-        'email_config': {
-            'smtp_server': 'smtp.gmail.com',      # 郵件服務器
-            'smtp_port': 465,                     # SSL端口
-            'from_email': 'ben.liu@ennowell.com', # 發件郵箱
-            'to_email': [                         # 多個收件人 - 使用列表
-                'ben.liu@ennowell.com',
-                'a705421728@gmail.com',
-                'anna73761103@gmail.com'
-            ],
-            'password': 'gjeacilwxyrxukin'        # 郵箱密碼或應用專用密碼
-        }
+        'email_config': email_config
     }
     
     # 創建監控器
