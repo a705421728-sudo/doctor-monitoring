@@ -248,49 +248,37 @@ class DoctorMonitor:
         
         return all_available_slots
     
-    def monitor(self, check_interval=300):
-        """開始監控"""
-        logging.info(f"開始監控醫師狀態，檢查間隔: {check_interval}秒")
+    def monitor(self):
+        """執行單次檢查"""
+        logging.info(f"開始檢查醫師狀態")
         logging.info(f"監控網址: {', '.join(self.urls)}")
         
-        error_count = 0
+        current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        logging.info(f"[{current_time}] 檢查醫師狀態...")
         
         try:
-            while True:
-                current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                logging.info(f"[{current_time}] 檢查醫師狀態...")
+            available_slots = self.check_all_doctors()
+            
+            if available_slots:
+                logging.info(f"🎉 發現 {len(available_slots)} 個可掛號時段！")
                 
-                try:
-                    available_slots = self.check_all_doctors()
-                    
-                    if available_slots:
-                        logging.info(f"🎉 發現 {len(available_slots)} 個可掛號時段！")
-                        
-                        # 發送郵件通知
-                        if self.email_config:
-                            self.send_email_notification(available_slots)
-                    
-                    error_count = 0  # 重置錯誤計數
-                    
-                except Exception as e:
-                    error_count += 1
-                    logging.error(f"檢查過程中出錯: {e}")
-                    
-                    # 如果連續錯誤多次，重新啟動瀏覽器
-                    if error_count >= 3:
-                        logging.warning("連續錯誤多次，重新啟動瀏覽器...")
-                        if self.driver:
-                            self.driver.quit()
-                        self.setup_driver()
-                        error_count = 0
+                # 發送郵件通知
+                if self.email_config:
+                    success = self.send_email_notification(available_slots)
+                    if success:
+                        logging.info("郵件通知發送成功")
+                    else:
+                        logging.error("郵件通知發送失敗")
+                return True  # 發現可掛號時段
+            else:
+                logging.info("當前無可掛號時段")
+                return False  # 無可掛號時段
                 
-                time.sleep(check_interval)
-                
-        except KeyboardInterrupt:
-            logging.info("監控程序被用戶中斷")
         except Exception as e:
-            logging.error(f"監控過程中出錯: {e}")
+            logging.error(f"檢查過程中出錯: {e}")
+            return False
         finally:
+            # 確保瀏覽器關閉
             if self.driver:
                 self.driver.quit()
                 logging.info("瀏覽器已關閉")
@@ -300,7 +288,7 @@ def main():
     config = {
         'urls': [
             'https://www6.vghtpe.gov.tw/reg/docTimetable.do?docid=DOC3208F',  # 尤香玉醫師
-            #'https://www6.vghtpe.gov.tw/reg/docTimetable.do?docid=DOC3491G'   # 周建成醫師
+            'https://www6.vghtpe.gov.tw/reg/docTimetable.do?docid=DOC3491G'   # 周建成醫師
         ],
         'email_config': {
             'smtp_server': 'smtp.gmail.com',      # 郵件服務器
@@ -312,15 +300,20 @@ def main():
                 'anna73761103@gmail.com'
             ],
             'password': 'gjeacilwxyrxukin'        # 郵箱密碼或應用專用密碼
-        },
-        'check_interval': 60  # 檢查間隔（秒）
+        }
     }
     
     # 創建監控器
     monitor = DoctorMonitor(config['urls'], config['email_config'])
     
-    # 開始監控
-    monitor.monitor(config['check_interval'])
+    # 執行單次檢查
+    found_available = monitor.monitor()
+    
+    # 根據檢查結果退出
+    if found_available:
+        sys.exit(0)  # 發現可掛號時段，正常退出
+    else:
+        sys.exit(0)  # 無可掛號時段，也正常退出
 
 if __name__ == "__main__":
     main()
