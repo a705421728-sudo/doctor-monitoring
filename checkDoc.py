@@ -317,7 +317,7 @@ class DoctorMonitor:
                         
                         # 設置暫停期 - 半小時內不再檢查
                         state = self.load_state()
-                        pause_until = datetime.now() + timedelta(minutes=30)
+                        pause_until = datetime.now() + timedelta(minutes=60)
                         state['pause_until'] = pause_until.isoformat()
                         state['last_notification_time'] = datetime.now().isoformat()
                         state['notification_count'] = state.get('notification_count', 0) + 1
@@ -399,4 +399,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
