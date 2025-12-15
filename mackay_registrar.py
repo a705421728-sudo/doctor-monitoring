@@ -66,8 +66,10 @@ class MackayChildHospitalRegistrar:
             logger.error(f"缺少必要的環境變數: {', '.join(missing_vars)}")
             logger.error("請在 GitHub Secrets 中設置以下變數:")
             logger.error("MACKAY_ID_NUMBER - 身分證字號")
-            logger.error("MACKAY_BIRTHDAY - 生日")
+            logger.error("MACKAY_BIRTHDAY - 生日 (格式: YYYYMMDD)")
             sys.exit(1)
+        
+        logger.info("環境變數驗證通過")
     
     def load_state(self):
         """加載監控狀態"""
@@ -78,6 +80,7 @@ class MackayChildHospitalRegistrar:
         except Exception as e:
             logger.warning(f"加載狀態文件失敗: {e}")
         
+        # 默認狀態
         return {
             'last_notification_time': None,
             'pause_until': None,
@@ -99,13 +102,18 @@ class MackayChildHospitalRegistrar:
         pause_until = state.get('pause_until')
         
         if pause_until:
-            pause_time = datetime.fromisoformat(pause_until)
-            if datetime.now() < pause_time:
-                remaining = (pause_time - datetime.now()).total_seconds() / 60
-                logger.info(f"在暫停期內，跳過檢查。剩餘暫停時間: {remaining:.1f} 分鐘")
-                return True
-            else:
-                # 暫停期已過，清除暫停狀態
+            try:
+                pause_time = datetime.fromisoformat(pause_until)
+                if datetime.now() < pause_time:
+                    remaining = (pause_time - datetime.now()).total_seconds() / 60
+                    logger.info(f"在暫停期內，跳過檢查。剩餘暫停時間: {remaining:.1f} 分鐘")
+                    return True
+                else:
+                    # 暫停期已過，清除暫停狀態
+                    state['pause_until'] = None
+                    self.save_state(state)
+            except Exception as e:
+                logger.warning(f"解析暫停時間失敗: {e}")
                 state['pause_until'] = None
                 self.save_state(state)
         
@@ -114,17 +122,30 @@ class MackayChildHospitalRegistrar:
     def init_session(self):
         """初始化會話，獲取必要的cookie"""
         try:
+            logger.info("正在初始化會話...")
+            
             # 先訪問首頁獲取cookie
             init_url = f"{self.base_url}/index.php"
             response = self.session.get(init_url, headers=self.headers, timeout=30)
             response.raise_for_status()
-            logger.info("Session initialized successfully")
+            logger.info("首頁訪問成功")
             
             # 訪問register_action.php獲取更多cookie
             register_action_url = f"{self.base_url}/register_action.php"
             response = self.session.get(register_action_url, headers=self.headers, timeout=30)
             response.raise_for_status()
+            logger.info("register_action.php訪問成功")
             
+            # 檢查是否有必要的cookie
+            cookies = self.session.cookies.get_dict()
+            logger.info(f"當前會話cookies: {cookies}")
+            
+        except requests.exceptions.Timeout:
+            logger.error("初始化會話超時")
+            raise
+        except requests.exceptions.RequestException as e:
+            logger.error(f"初始化會話請求失敗: {e}")
+            raise
         except Exception as e:
             logger.error(f"初始化會話失敗: {e}")
             raise
@@ -144,9 +165,11 @@ class MackayChildHospitalRegistrar:
                 'strDr': appointment_data.get('doctor_code'),  # 醫師代碼
                 'strIdnoPassPortSel': '1',  # 身分證
                 'txtID': appointment_data.get('id_number'),  # 身分證字號
-                'txtBirth': appointment_data.get('birthday'),  # 生日: YYYMMDD
+                'txtBirth': appointment_data.get('birthday'),  # 生日: YYYYMMDD
                 'txtwebword': appointment_data.get('captcha', ''),  # 驗證碼
             }
+            
+            logger.info(f"掛號表單數據: {form_data}")
             
             # 設置請求頭
             post_headers = self.headers.copy()
@@ -157,7 +180,7 @@ class MackayChildHospitalRegistrar:
             
             # 發送掛號請求
             register_url = f"{self.base_url}/registerdone.php"
-            logger.info(f"嘗試掛號: {form_data}")
+            logger.info(f"發送掛號請求到: {register_url}")
             
             response = self.session.post(
                 register_url,
@@ -167,9 +190,15 @@ class MackayChildHospitalRegistrar:
             )
             response.raise_for_status()
             
+            # 記錄響應狀態
+            logger.info(f"掛號請求響應狀態碼: {response.status_code}")
+            
             # 解析結果
             return self.parse_result(response.text)
             
+        except requests.exceptions.Timeout:
+            logger.error("掛號請求超時")
+            return {'success': False, 'error': '請求超時'}
         except requests.exceptions.RequestException as e:
             logger.error(f"掛號請求失敗: {e}")
             return {'success': False, 'error': str(e)}
@@ -180,35 +209,51 @@ class MackayChildHospitalRegistrar:
     def parse_result(self, html_content):
         """解析掛號結果頁面 - 增強版"""
         try:
-            # 保存HTML用于调试（首次运行时）
+            # 保存HTML用於調試
             debug_file = 'last_response.html'
             with open(debug_file, 'w', encoding='utf-8') as f:
                 f.write(html_content)
+            logger.info(f"已保存響應HTML到: {debug_file}")
             
             soup = BeautifulSoup(html_content, 'html.parser')
             
-            # 尝试查找成功关键词（更全面的判断）
+            # 獲取頁面文本
             page_text = soup.get_text()
             
-            # 1. 先检查明确的成功关键词
+            # 1. 先檢查明確的成功關鍵詞
             success_keywords = ['掛號成功', '預約成功', '掛號完成', '已掛號', '成功掛號']
             for keyword in success_keywords:
                 if keyword in page_text:
-                    # 提取详细信息
+                    logger.info(f"找到成功關鍵詞: {keyword}")
+                    # 提取詳細信息
                     result = self.extract_details_from_page(soup, page_text)
                     result['success'] = True
                     result['full'] = False
                     return result
             
-            # 2. 检查满号信息
-            if '滿號' in page_text or '請改掛' in page_text or '已額滿' in page_text:
-                return {
-                    'success': False,
-                    'full': True,
-                    'status': '已滿號或無可用時段'
-                }
+            # 2. 檢查滿號信息
+            full_keywords = ['滿號', '請改掛', '已額滿', '額滿', '已掛滿']
+            for keyword in full_keywords:
+                if keyword in page_text:
+                    logger.info(f"找到滿號關鍵詞: {keyword}")
+                    return {
+                        'success': False,
+                        'full': True,
+                        'status': '已滿號或無可用時段'
+                    }
             
-            # 3. 查找特定的结果区域（原有的逻辑）
+            # 3. 檢查錯誤信息（如驗證碼錯誤）
+            error_keywords = ['驗證碼錯誤', '身份證錯誤', '生日錯誤', '資料錯誤']
+            for keyword in error_keywords:
+                if keyword in page_text:
+                    logger.warning(f"找到錯誤關鍵詞: {keyword}")
+                    return {
+                        'success': False,
+                        'error': keyword,
+                        'full': False
+                    }
+            
+            # 4. 查找特定的結果區域
             box_wrapper = soup.find('div', {'id': 'myprint'})
             if box_wrapper:
                 list_items = box_wrapper.find_all('li')
@@ -226,6 +271,7 @@ class MackayChildHospitalRegistrar:
                         result['status'] = text.replace('掛號結果：', '').strip()
                 
                 if 'status' in result:
+                    logger.info(f"從myprint區域找到掛號結果: {result['status']}")
                     if '滿號' in result['status'] or '請改掛' in result['status']:
                         result['success'] = False
                         result['full'] = True
@@ -237,14 +283,50 @@ class MackayChildHospitalRegistrar:
                         result['full'] = False
                     return result
             
-            # 4. 如果以上都没找到，检查页面是否有表单错误信息
+            # 5. 查找表格中的結果
+            tables = soup.find_all('table')
+            for table in tables:
+                table_text = table.get_text(strip=True)
+                if '掛號結果' in table_text or '看診日期' in table_text:
+                    result = {}
+                    rows = table.find_all('tr')
+                    for row in rows:
+                        cols = row.find_all('td')
+                        if len(cols) >= 2:
+                            key = cols[0].get_text(strip=True)
+                            value = cols[1].get_text(strip=True)
+                            if '日期' in key:
+                                result['appointment_date'] = value
+                            elif '科別' in key:
+                                result['department'] = value
+                            elif '醫師' in key:
+                                result['doctor'] = value
+                            elif '結果' in key:
+                                result['status'] = value
+                    
+                    if 'status' in result:
+                        logger.info(f"從表格找到掛號結果: {result['status']}")
+                        if '滿號' in result['status'] or '請改掛' in result['status']:
+                            result['success'] = False
+                            result['full'] = True
+                        elif '成功' in result['status'] or '已掛號' in result['status']:
+                            result['success'] = True
+                            result['full'] = False
+                        else:
+                            result['success'] = False
+                            result['full'] = False
+                        return result
+            
+            # 6. 如果以上都沒找到，檢查頁面是否有表單錯誤信息
             error_divs = soup.find_all(['div', 'p', 'span'], class_=['error', 'alert', 'warning'])
             if error_divs:
                 error_msg = ' | '.join([div.get_text(strip=True) for div in error_divs[:3]])
+                logger.warning(f"找到錯誤信息: {error_msg}")
                 return {'success': False, 'error': f'頁面錯誤: {error_msg[:100]}'}
             
-            # 5. 最后的备选方案：返回原始文本片段供调试
+            # 7. 最後的備選方案：返回原始文本片段供調試
             text_preview = page_text.replace('\n', ' ').replace('\r', '').strip()[:500]
+            logger.warning(f"無法解析結果，頁面內容: {text_preview}...")
             return {
                 'success': False, 
                 'error': f'無法解析結果，頁面內容: {text_preview}...'
@@ -252,7 +334,7 @@ class MackayChildHospitalRegistrar:
             
         except Exception as e:
             logger.error(f"解析結果失敗: {e}")
-            # 保存错误页面以便分析
+            # 保存錯誤頁面以便分析
             with open('error_response.html', 'w', encoding='utf-8') as f:
                 f.write(html_content)
             return {'success': False, 'error': f'解析異常: {str(e)}'}
@@ -284,7 +366,6 @@ class MackayChildHospitalRegistrar:
                 result['doctor'] = next_text
         
         # 方法2：使用正則表達式提取常見格式
-        import re
         patterns = [
             (r'看診日期[：:]?\s*([^\s]+)', 'appointment_date'),
             (r'科別[：:]?\s*([^\s]+)', 'department'),
@@ -300,6 +381,7 @@ class MackayChildHospitalRegistrar:
         # 設置默認狀態
         result['status'] = '掛號成功'
         
+        logger.info(f"從成功頁面提取的詳細信息: {result}")
         return result
     
     def send_email_notification(self, appointment_result):
@@ -388,12 +470,12 @@ class MackayChildHospitalRegistrar:
                 # 準備掛號資料 - 只嘗試上午診 (session: '1')
                 appointment_data = {
                     'date': date,
-                    'session': '2',  # 只掛上午診
+                    'session': '1',  # 修正：上午診代碼為'1'，不是'2'
                     'dept_code': '30',  # 小兒科
                     'doctor_code': doctor['code'],
                     'id_number': self.id_number,
                     'birthday': self.birthday,
-                    'captcha': '',
+                    'captcha': '',  # 注意：如果網站需要驗證碼，這裡需要處理
                 }
                 
                 session_name = "上午診" if appointment_data['session'] == '1' else "下午診"
@@ -404,7 +486,7 @@ class MackayChildHospitalRegistrar:
                 
                 # 檢查結果
                 if result.get('success'):
-                    logger.info(f"✓ 成功掛到 {date} {doctor['name']} 醫師 上午診")
+                    logger.info(f"✓ 成功掛到 {date} {doctor['name']} 醫師 {session_name}")
                     logger.info(f"詳細結果: {result}")
                     
                     # 發送郵件通知
@@ -422,9 +504,10 @@ class MackayChildHospitalRegistrar:
                     return "success"
                     
                 elif result.get('full'):
-                    logger.info(f"✗ {date} {doctor['name']} 醫師上午診已滿號")
+                    logger.info(f"✗ {date} {doctor['name']} 醫師{session_name}已滿號")
                 else:
-                    logger.warning(f"? {date} {doctor['name']} 醫師掛號失敗: {result.get('error', '未知錯誤')}")
+                    error_msg = result.get('error', '未知錯誤')
+                    logger.warning(f"? {date} {doctor['name']} 醫師掛號失敗: {error_msg}")
                 
                 # 避免請求過於頻繁
                 time.sleep(2)
@@ -443,23 +526,28 @@ def main():
     """主程式"""
     logger.info("=== 開始馬偕兒童醫院掛號監控 ===")
     
-    # 創建掛號器實例
-    registrar = MackayChildHospitalRegistrar()
+    try:
+        # 創建掛號器實例
+        registrar = MackayChildHospitalRegistrar()
+        
+        # 執行批量掛號
+        result = registrar.batch_registration()
+        
+        # 記錄結果
+        result_messages = {
+            'skipped': "⏸️ 在暫停期內，跳過檢查",
+            'init_failed': "❌ 初始化會話失敗",
+            'success': "✅ 成功掛號！已發送郵件通知",
+            'no_availability': "❌ 所有嘗試的日期都無可掛號時段",
+        }
+        
+        logger.info(result_messages.get(result, f"執行結果: {result}"))
+        
+    except Exception as e:
+        logger.error(f"程式執行過程中發生未預期的錯誤: {e}")
+        return 1
     
-    # 執行批量掛號
-    result = registrar.batch_registration()
-    
-    # 記錄結果
-    result_messages = {
-        'skipped': "⏸️ 在暫停期內，跳過檢查",
-        'init_failed': "❌ 初始化會話失敗",
-        'success': "✅ 成功掛號！已發送郵件通知",
-        'no_availability': "❌ 所有嘗試的日期都無可掛號時段",
-    }
-    
-    logger.info(result_messages.get(result, f"執行結果: {result}"))
     logger.info("=== 馬偕兒童醫院掛號監控結束 ===")
-    
     return 0
 
 
