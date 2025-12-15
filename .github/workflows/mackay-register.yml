@@ -1,52 +1,50 @@
-name: Mackay Children Hospital Auto Register
+name: 馬偕兒童醫院掛號監控
 
 on:
-  workflow_dispatch:  # 手動觸發
   schedule:
-    # 改為每10分鐘執行一次（與榮總一致，確保可靠）
-    - cron: '*/10 * * * *'
-
-# 添加並行控制，防止重疊執行
-concurrency:
-  group: ${{ github.workflow }}
-  cancel-in-progress: false
+    # 每5分鐘執行一次
+    - cron: '*/5 * * * *'
+  workflow_dispatch:  # 允許手動觸發
 
 jobs:
-  run_auto_register:
+  mackay-register:
     runs-on: ubuntu-latest
-    # 縮短超時時間，避免長時間運行佔用資源
-    timeout-minutes: 5
-
+    
     steps:
-      # 1. 獲取代碼（使用與榮總相同的 v3 版本）
-      - name: Checkout repository
-        uses: actions/checkout@v3
-
-      # 2. 設置Python環境
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.11'
-
-      # 3. 安裝依賴（精簡版）
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install requests beautifulsoup4
-
-      # 4. 執行掛號腳本（核心步驟）
-      - name: Run Mackay auto register script
-        env:
-          # 僅注入必要變數（移除SMTP相關，先確保核心功能）
-          MACKAY_ID_NUMBER: ${{ secrets.MACKAY_ID_NUMBER }}
-          MACKAY_BIRTHDAY: ${{ secrets.MACKAY_BIRTHDAY }}
-          # 郵件配置暫時移除，先測試調度
-        run: |
-          echo "🏥 馬偕掛號監控啟動"
-          echo "執行時間: $(date)"
-          echo "事件觸發: ${{ github.event_name }}"
-          
-          # 執行主程序
-          python mackay_registrar.py
-          
-          echo "✅ 本次執行完成"
+    - name: 檢出代碼
+      uses: actions/checkout@v3
+    
+    - name: 設置 Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: 安裝依賴
+      run: |
+        python -m pip install --upgrade pip
+        pip install requests beautifulsoup4
+    
+    - name: 執行掛號監控
+      env:
+        MACKAY_ID_NUMBER: ${{ secrets.MACKAY_ID_NUMBER }}
+        MACKAY_BIRTHDAY: ${{ secrets.MACKAY_BIRTHDAY }}
+        MACKAY_NOTIFICATION_EMAIL: ${{ secrets.MACKAY_NOTIFICATION_EMAIL }}
+        SMTP_SERVER: ${{ secrets.SMTP_SERVER }}
+        SMTP_PORT: ${{ secrets.SMTP_PORT }}
+        SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+        SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+        SMTP_SENDER: ${{ secrets.SMTP_SENDER }}
+      run: |
+        echo "🏥 馬偕掛號監控啟動"
+        echo "執行時間: $(date)"
+        echo "事件觸發: ${{ github.event_name }}"
+        python mackay_registrar.py
+    
+    - name: 上傳日誌文件
+      if: always()
+      uses: actions/upload-artifact@v3
+      with:
+        name: mackay-register-logs
+        path: |
+          mackay_register.log
+          mackay_state.json
