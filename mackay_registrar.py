@@ -16,8 +16,7 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('mackay_register.log', encoding='utf-8'),
-        logging.StreamHandler(sys.stdout)
+        logging.StreamHandler(sys.stdout)  # 只輸出到控制台，不在 GitHub Actions 產生檔案
     ]
 )
 logger = logging.getLogger(__name__)
@@ -31,9 +30,6 @@ class MackayChildHospitalRegistrar:
         # 支援本地測試和GitHub環境
         self.load_config()
         
-        # 狀態文件
-        self.state_file = 'mackay_state.json'
-        
         # 設定 User-Agent 模擬瀏覽器
         self.headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36',
@@ -44,6 +40,9 @@ class MackayChildHospitalRegistrar:
             'Connection': 'keep-alive',
             'Upgrade-Insecure-Requests': '1',
         }
+        
+        # 記錄是否已發送通知（僅限本次執行）
+        self.notification_sent = False
     
     def load_config(self):
         """加載配置：優先使用環境變數，本地測試可用config.json"""
@@ -122,54 +121,6 @@ class MackayChildHospitalRegistrar:
             sys.exit(1)
         
         logger.info("配置驗證通過")
-    
-    def load_state(self):
-        """加載監控狀態"""
-        try:
-            if os.path.exists(self.state_file):
-                with open(self.state_file, 'r', encoding='utf-8') as f:
-                    return json.load(f)
-        except Exception as e:
-            logger.warning(f"加載狀態文件失敗: {e}")
-        
-        # 默認狀態
-        return {
-            'last_notification_time': None,
-            'pause_until': None,
-            'notification_count': 0,
-            'last_check': None
-        }
-    
-    def save_state(self, state):
-        """保存監控狀態"""
-        try:
-            with open(self.state_file, 'w', encoding='utf-8') as f:
-                json.dump(state, f, ensure_ascii=False, indent=2)
-        except Exception as e:
-            logger.warning(f"保存狀態文件失敗: {e}")
-    
-    def should_skip_check(self):
-        """檢查是否需要跳過本次檢查"""
-        state = self.load_state()
-        pause_until = state.get('pause_until')
-        
-        if pause_until:
-            try:
-                pause_time = datetime.fromisoformat(pause_until)
-                if datetime.now() < pause_time:
-                    remaining = (pause_time - datetime.now()).total_seconds() / 60
-                    logger.info(f"在暫停期內，跳過檢查。剩餘暫停時間: {remaining:.1f} 分鐘")
-                    return True
-                else:
-                    # 暫停期已過，清除暫停狀態
-                    state['pause_until'] = None
-                    self.save_state(state)
-            except Exception as e:
-                logger.warning(f"解析暫停時間失敗: {e}")
-                state['pause_until'] = None
-                self.save_state(state)
-        
-        return False
     
     def init_session(self):
         """初始化會話，獲取必要的cookie"""
@@ -328,6 +279,7 @@ class MackayChildHospitalRegistrar:
             server.quit()
             
             logger.info("郵件通知已發送")
+            self.notification_sent = True
             return True
             
         except Exception as e:
@@ -336,12 +288,6 @@ class MackayChildHospitalRegistrar:
     
     def batch_registration(self):
         """批量掛號 - 可為每個日期指定時段"""
-        
-        # 檢查是否需要跳過
-        if self.should_skip_check():
-            logger.info("在暫停期內，跳過本次檢查")
-            return "skipped"
-        
         # 初始化會話
         try:
             self.init_session()
@@ -395,27 +341,21 @@ class MackayChildHospitalRegistrar:
                     logger.info(f"✓ 成功掛到 {appointment['date']} {doctor['name']} 醫師 {appointment['session_name']}")
                     
                     # 發送郵件通知
-                    if self.send_email_notification(result):
-                        # 設置暫停期
-                        state = self.load_state()
-                        pause_until = datetime.now() + timedelta(hours=2)
-                        state['pause_until'] = pause_until.isoformat()
-                        state['last_notification_time'] = datetime.now().isoformat()
-                        state['notification_count'] = state.get('notification_count', 0) + 1
-                        self.save_state(state)
-                        logger.info(f"已設置暫停檢查直到: {pause_until.strftime('%Y-%m-%d %H:%M:%S')}")
+                    email_sent = self.send_email_notification(result)
+                    
+                    if email_sent:
+                        logger.info("郵件通知已發送")
                     else:
-                        logger.warning("郵件發送失敗，但仍設置暫停期避免重複嘗試")
-                        # 即使郵件發送失敗，也設置暫停期
-                        state = self.load_state()
-                        pause_until = datetime.now() + timedelta(hours=2)
-                        state['pause_until'] = pause_until.isoformat()
-                        state['last_notification_time'] = datetime.now().isoformat()
-                        state['notification_count'] = state.get('notification_count', 0) + 1
-                        self.save_state(state)
+                        logger.warning("郵件發送失敗")
                     
                     success_count += 1
-                    return "success"
+                    
+                    # 如果在 GitHub Actions 中，成功後直接退出程序
+                    if os.getenv('GITHUB_ACTIONS'):
+                        logger.info("在 GitHub Actions 環境中，掛號成功後退出")
+                        return "success_and_exit"
+                    else:
+                        return "success"
                     
                 elif result.get('full'):
                     logger.info(f"✗ {appointment['date']} {doctor['name']} 醫師{appointment['session_name']}已滿號")
@@ -427,12 +367,6 @@ class MackayChildHospitalRegistrar:
                 time.sleep(2)
         
         logger.info(f"批量掛號完成。共嘗試 {total_attempts} 次，成功 {success_count} 次。")
-        
-        # 保存最後檢查時間
-        state = self.load_state()
-        state['last_check'] = datetime.now().isoformat()
-        self.save_state(state)
-        
         return "no_availability"
 
 
@@ -452,6 +386,7 @@ def main():
             'skipped': "⏸️ 在暫停期內，跳過檢查",
             'init_failed': "❌ 初始化會話失敗",
             'success': "✅ 成功掛號！",
+            'success_and_exit': "✅ 成功掛號！程式將退出",
             'no_availability': "❌ 無可掛號時段",
         }
         
