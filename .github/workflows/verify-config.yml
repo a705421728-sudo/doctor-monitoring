@@ -4,12 +4,12 @@ on:
   workflow_dispatch:  # 允许手动触发
   schedule:
     # 每周一早上8点自动验证一次（可选）
-    - cron: '0 0 * * 1'
+    - cron: '0 8 * * 1'
 
 jobs:
   verify-config:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     
     steps:
       - name: 检出代码
@@ -24,24 +24,174 @@ jobs:
         run: |
           python -m pip install --upgrade pip
 
-    - name: 执行安全验证
-      env:
-        # 注入所有必要的Secrets（保持不变）
-        MACKAY_ID_NUMBER: ${{ secrets.MACKAY_ID_NUMBER }}
-        MACKAY_BIRTHDAY: ${{ secrets.MACKAY_BIRTHDAY }}
-        MACKAY_NOTIFICATION_EMAIL: ${{ secrets.MACKAY_NOTIFICATION_EMAIL }}
-        SMTP_SERVER: ${{ secrets.SMTP_SERVER }}
-        SMTP_PORT: ${{ secrets.SMTP_PORT }}
-        SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
-        SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
-        SMTP_SENDER: ${{ secrets.SMTP_SENDER }}
-        GITHUB_REPOSITORY: ${{ github.repository }}
-        GITHUB_RUN_ID: ${{ github.run_id }}
-      run: |
-        # 首先测试SMTP连接
-        echo "=== 第一阶段：SMTP连接诊断 ==="
-        python test_smtp.py
-        
-        echo -e "\n=== 第二阶段：完整配置验证 ==="
-        # 如果SMTP测试失败，这里会直接退出
-        python verify_config.py
+      - name: 创建SMTP测试脚本
+        run: |
+          cat > test_smtp.py << 'EOF'
+          import os
+          import smtplib
+          import ssl
+          
+          def test_smtp_connection():
+              """分步测试SMTP连接，打印详细日志"""
+              config = {
+                  'server': os.getenv('SMTP_SERVER'),
+                  'port': int(os.getenv('SMTP_PORT', '587')),
+                  'username': os.getenv('SMTP_USERNAME'),
+                  'password': os.getenv('SMTP_PASSWORD'),
+              }
+              
+              print("🔧 开始SMTP连接测试")
+              print(f"   服务器: {config['server']}:{config['port']}")
+              print(f"   用户名: {config['username']}")
+              print("   密码: " + ("[已设置]" if config['password'] else "[未设置]"))
+              
+              try:
+                  # 1. 测试服务器可达性（基础连接）
+                  print("\n1. 尝试建立基础TCP连接...")
+                  server = smtplib.SMTP(config['server'], config['port'], timeout=10)
+                  print(f"   ✅ TCP连接成功 (响应: {server.ehlo()[0]})")
+                  
+                  # 2. 测试STARTTLS加密
+                  print("2. 尝试STARTTLS加密...")
+                  server.starttls(context=ssl.create_default_context())
+                  server.ehlo()
+                  print("   ✅ TLS加密成功")
+                  
+                  # 3. 测试登录认证
+                  print("3. 尝试登录认证...")
+                  server.login(config['username'], config['password'])
+                  print("   ✅ 登录认证成功")
+                  
+                  # 4. 测试简单邮件发送
+                  print("4. 测试邮件发送...")
+                  test_msg = f"From: {config['username']}\nTo: {config['username']}\nSubject: SMTP测试\n\n这是一封来自GitHub Actions的SMTP连接测试邮件。"
+                  server.sendmail(config['username'], config['username'], test_msg)
+                  print("   ✅ 测试邮件发送成功")
+                  
+                  server.quit()
+                  print("\n🎉 所有SMTP连接测试通过！")
+                  return True
+                  
+              except Exception as e:
+                  print(f"\n❌ 测试失败于步骤 {e.__class__.__name__}: {e}")
+                  return False
+          
+          if __name__ == "__main__":
+              success = test_smtp_connection()
+              exit(0 if success else 1)
+          EOF
+
+      - name: 第一阶段：SMTP连接诊断
+        env:
+          SMTP_SERVER: ${{ secrets.SMTP_SERVER }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+        run: |
+          echo "=== SMTP连接诊断开始 ==="
+          echo "测试时间: $(date)"
+          echo "------------------------"
+          
+          if [ -z "$SMTP_SERVER" ] || [ -z "$SMTP_USERNAME" ] || [ -z "$SMTP_PASSWORD" ]; then
+            echo "❌ SMTP配置不完整，请检查以下GitHub Secrets:"
+            echo "   - SMTP_SERVER: $(if [ -z "$SMTP_SERVER" ]; then echo '未设置'; else echo '已设置'; fi)"
+            echo "   - SMTP_USERNAME: $(if [ -z "$SMTP_USERNAME" ]; then echo '未设置'; else echo '已设置'; fi)"
+            echo "   - SMTP_PASSWORD: $(if [ -z "$SMTP_PASSWORD" ]; then echo '未设置'; else echo '已设置'; fi)"
+            echo "   - SMTP_PORT: ${SMTP_PORT:-587 (默认)}"
+            exit 1
+          fi
+          
+          python test_smtp.py
+          
+          echo "------------------------"
+          echo "SMTP诊断完成"
+
+      - name: 第二阶段：完整配置验证
+        if: success()  # 只有SMTP测试成功后才执行
+        env:
+          # 注入所有必要的Secrets
+          MACKAY_ID_NUMBER: ${{ secrets.MACKAY_ID_NUMBER }}
+          MACKAY_BIRTHDAY: ${{ secrets.MACKAY_BIRTHDAY }}
+          MACKAY_NOTIFICATION_EMAIL: ${{ secrets.MACKAY_NOTIFICATION_EMAIL }}
+          SMTP_SERVER: ${{ secrets.SMTP_SERVER }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          SMTP_SENDER: ${{ secrets.SMTP_SENDER }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+        run: |
+          echo "=== 完整配置验证开始 ==="
+          echo "验证时间: $(date)"
+          echo "------------------------"
+          
+          # 检查核心配置
+          echo "检查核心环境变量..."
+          if [ -z "$MACKAY_ID_NUMBER" ]; then
+            echo "❌ MACKAY_ID_NUMBER 未设置"
+            exit 1
+          else
+            echo "✅ MACKAY_ID_NUMBER: 已设置 (长度: ${#MACKAY_ID_NUMBER})"
+          fi
+          
+          if [ -z "$MACKAY_BIRTHDAY" ]; then
+            echo "❌ MACKAY_BIRTHDAY 未设置"
+            exit 1
+          else
+            echo "✅ MACKAY_BIRTHDAY: 已设置 (长度: ${#MACKAY_BIRTHDAY})"
+          fi
+          
+          # 检查通知邮箱
+          echo -e "\n检查通知邮箱列表..."
+          if [ -z "$MACKAY_NOTIFICATION_EMAIL" ]; then
+            echo "❌ MACKAY_NOTIFICATION_EMAIL 未设置"
+            exit 1
+          else
+            # 安全地显示邮箱数量
+            EMAIL_COUNT=$(echo "$MACKAY_NOTIFICATION_EMAIL" | tr ',' '\n' | wc -l)
+            echo "✅ 找到 $EMAIL_COUNT 个收件人邮箱"
+            
+            # 显示第一个邮箱（安全处理）
+            FIRST_EMAIL=$(echo "$MACKAY_NOTIFICATION_EMAIL" | cut -d',' -f1)
+            if [[ "$FIRST_EMAIL" =~ ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
+              echo "✅ 第一个邮箱格式有效: ${FIRST_EMAIL:0:3}***${FIRST_EMAIL: -4}"
+            else
+              echo "⚠️  第一个邮箱格式可能无效"
+            fi
+          fi
+          
+          echo -e "\n执行Python验证脚本..."
+          python verify_config.py
+          
+          echo "------------------------"
+          echo "完整配置验证完成"
+
+      - name: 上传验证报告
+        if: always()  # 无论成功失败都执行
+        uses: actions/upload-artifact@v4
+        with:
+          name: verification-report
+          path: |
+            mackay_register.log
+            mackay_state.json
+          retention-days: 7
+          overwrite: true
+
+      - name: 验证总结
+        run: |
+          echo "========================================"
+          echo "配置验证工作流执行完成"
+          echo "========================================"
+          echo "状态: ${{ job.status }}"
+          echo "时间: $(date)"
+          echo ""
+          echo "📋 验证结果:"
+          if [ "${{ job.status }}" = "success" ]; then
+            echo "✅ 所有配置检查通过！"
+            echo "✅ 挂号系统已就绪"
+            echo "✅ 邮件功能正常"
+          else
+            echo "⚠️  部分配置需要检查"
+            echo "📧 详细报告请查看工作流日志"
+          fi
+          echo "========================================"
