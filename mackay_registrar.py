@@ -1,0 +1,384 @@
+import requests
+import re
+from bs4 import BeautifulSoup
+import time
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from datetime import datetime, timedelta
+import logging
+import os
+import sys
+import json
+
+# 配置日誌
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('mackay_register.log', encoding='utf-8'),
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+logger = logging.getLogger(__name__)
+
+
+class MackayChildHospitalRegistrar:
+    def __init__(self):
+        self.base_url = "https://www.mmh.org.tw/child"
+        self.session = requests.Session()
+        
+        # 從環境變數讀取配置
+        self.id_number = os.getenv('MACKAY_ID_NUMBER', '')
+        self.birthday = os.getenv('MACKAY_BIRTHDAY', '')
+        self.smtp_config = {
+            'server': os.getenv('SMTP_SERVER', ''),
+            'port': int(os.getenv('SMTP_PORT', '587')),
+            'username': os.getenv('SMTP_USERNAME', ''),
+            'password': os.getenv('SMTP_PASSWORD', ''),
+            'sender': os.getenv('SMTP_SENDER', os.getenv('SMTP_USERNAME', '')),
+            'recipient': os.getenv('MACKAY_NOTIFICATION_EMAIL', '')
+        }
+        
+        # 驗證必要環境變數
+        self.validate_environment()
+        
+        # 狀態文件
+        self.state_file = 'mackay_state.json'
+        
+        # 設定 User-Agent 模擬瀏覽器
+        self.headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+            'Accept-Language': 'zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Origin': 'https://www.mmh.org.tw',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+        }
+    
+    def validate_environment(self):
+        """驗證必要的環境變數"""
+        required_vars = ['MACKAY_ID_NUMBER', 'MACKAY_BIRTHDAY']
+        missing_vars = [var for var in required_vars if not os.getenv(var)]
+        
+        if missing_vars:
+            logger.error(f"缺少必要的環境變數: {', '.join(missing_vars)}")
+            logger.error("請在 GitHub Secrets 中設置以下變數:")
+            logger.error("MACKAY_ID_NUMBER - 身分證字號")
+            logger.error("MACKAY_BIRTHDAY - 生日 (民國年，如 1080612)")
+            sys.exit(1)
+    
+    def load_state(self):
+        """加載監控狀態"""
+        try:
+            if os.path.exists(self.state_file):
+                with open(self.state_file, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+        except Exception as e:
+            logger.warning(f"加載狀態文件失敗: {e}")
+        
+        return {
+            'last_notification_time': None,
+            'pause_until': None,
+            'notification_count': 0,
+            'last_check': None
+        }
+    
+    def save_state(self, state):
+        """保存監控狀態"""
+        try:
+            with open(self.state_file, 'w', encoding='utf-8') as f:
+                json.dump(state, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.warning(f"保存狀態文件失敗: {e}")
+    
+    def should_skip_check(self):
+        """檢查是否需要跳過本次檢查"""
+        state = self.load_state()
+        pause_until = state.get('pause_until')
+        
+        if pause_until:
+            pause_time = datetime.fromisoformat(pause_until)
+            if datetime.now() < pause_time:
+                remaining = (pause_time - datetime.now()).total_seconds() / 60
+                logger.info(f"在暫停期內，跳過檢查。剩餘暫停時間: {remaining:.1f} 分鐘")
+                return True
+            else:
+                # 暫停期已過，清除暫停狀態
+                state['pause_until'] = None
+                self.save_state(state)
+        
+        return False
+    
+    def init_session(self):
+        """初始化會話，獲取必要的cookie"""
+        try:
+            # 先訪問首頁獲取cookie
+            init_url = f"{self.base_url}/index.php"
+            response = self.session.get(init_url, headers=self.headers, timeout=30)
+            response.raise_for_status()
+            logger.info("Session initialized successfully")
+            
+            # 訪問register_action.php獲取更多cookie
+            register_action_url = f"{self.base_url}/register_action.php"
+            response = self.session.get(register_action_url, headers=self.headers, timeout=30)
+            response.raise_for_status()
+            
+        except Exception as e:
+            logger.error(f"初始化會話失敗: {e}")
+            raise
+    
+    def make_appointment(self, appointment_data):
+        """
+        執行掛號
+        appointment_data: 包含掛號資訊的字典
+        """
+        try:
+            # 準備表單數據
+            form_data = {
+                'workflag': 'registernow',
+                'strSchdate': appointment_data.get('date'),  # 格式: 2025/12/20
+                'strSchap': appointment_data.get('session'),  # 1:上午, 2:下午, 3:夜間
+                'strDept': appointment_data.get('dept_code'),  # 科別代碼
+                'strDr': appointment_data.get('doctor_code'),  # 醫師代碼
+                'strIdnoPassPortSel': '1',  # 身分證
+                'txtID': appointment_data.get('id_number'),  # 身分證字號
+                'txtBirth': appointment_data.get('birthday'),  # 生日: YYYMMDD
+                'txtwebword': appointment_data.get('captcha', ''),  # 驗證碼
+            }
+            
+            # 設置請求頭
+            post_headers = self.headers.copy()
+            post_headers.update({
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'Referer': f'{self.base_url}/register_action.php',
+            })
+            
+            # 發送掛號請求
+            register_url = f"{self.base_url}/registerdone.php"
+            logger.info(f"嘗試掛號: {form_data}")
+            
+            response = self.session.post(
+                register_url,
+                data=form_data,
+                headers=post_headers,
+                timeout=30
+            )
+            response.raise_for_status()
+            
+            # 解析結果
+            return self.parse_result(response.text)
+            
+        except requests.exceptions.RequestException as e:
+            logger.error(f"掛號請求失敗: {e}")
+            return {'success': False, 'error': str(e)}
+        except Exception as e:
+            logger.error(f"掛號過程中發生錯誤: {e}")
+            return {'success': False, 'error': str(e)}
+    
+    def parse_result(self, html_content):
+        """解析掛號結果頁面"""
+        try:
+            soup = BeautifulSoup(html_content, 'html.parser')
+            
+            # 查找掛號結果
+            box_wrapper = soup.find('div', {'id': 'myprint'})
+            if not box_wrapper:
+                return {'success': False, 'error': '無法找到結果區域'}
+            
+            # 提取所有列表項目
+            list_items = box_wrapper.find_all('li')
+            result = {}
+            
+            for item in list_items:
+                text = item.get_text(strip=True)
+                if '看診日期：' in text:
+                    result['appointment_date'] = text.replace('看診日期：', '').strip()
+                elif '看診科別：' in text:
+                    result['department'] = text.replace('看診科別：', '').strip()
+                elif '看診醫師：' in text:
+                    result['doctor'] = text.replace('看診醫師：', '').strip()
+                elif '掛號結果：' in text:
+                    result['status'] = text.replace('掛號結果：', '').strip()
+            
+            # 判斷是否成功
+            if 'status' in result:
+                if '滿號' in result['status'] or '請改掛' in result['status']:
+                    result['success'] = False
+                    result['full'] = True
+                elif '成功' in result['status'] or '已掛號' in result['status']:
+                    result['success'] = True
+                    result['full'] = False
+                else:
+                    result['success'] = False
+                    result['full'] = False
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"解析結果失敗: {e}")
+            return {'success': False, 'error': f'解析失敗: {str(e)}'}
+    
+    def send_email_notification(self, appointment_result):
+        """發送郵件通知"""
+        if not self.smtp_config['server']:
+            logger.warning("未配置郵件設定，無法發送通知")
+            return False
+            
+        try:
+            # 創建郵件
+            msg = MIMEMultipart()
+            msg['From'] = self.smtp_config['sender']
+            msg['To'] = self.smtp_config['recipient']
+            msg['Subject'] = f"🎉 馬偕兒童醫院掛號成功 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            
+            # 郵件內容
+            body = f"""
+            恭喜！馬偕兒童醫院掛號成功！
+            
+            詳細資訊：
+            掛號狀態: 成功 ✓
+            看診日期: {appointment_result.get('appointment_date', 'N/A')}
+            看診科別: {appointment_result.get('department', 'N/A')}
+            看診醫師: {appointment_result.get('doctor', 'N/A')}
+            結果訊息: {appointment_result.get('status', 'N/A')}
+            
+            掛號時間: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+            請記得準時就診！
+            
+            ---
+            此為自動掛號系統通知
+            """
+            
+            msg.attach(MIMEText(body, 'plain', 'utf-8'))
+            
+            # 發送郵件
+            server = smtplib.SMTP(self.smtp_config['server'], self.smtp_config['port'])
+            server.starttls()
+            server.login(self.smtp_config['username'], self.smtp_config['password'])
+            server.send_message(msg)
+            server.quit()
+            
+            logger.info("郵件通知已發送")
+            return True
+            
+        except Exception as e:
+            logger.error(f"發送郵件失敗: {e}")
+            return False
+    
+    def batch_registration(self):
+        """批量掛號 - 只嘗試指定的三個日期的上午診"""
+        
+        # 檢查是否需要跳過（在暫停期內）
+        if self.should_skip_check():
+            logger.info("在暫停期內，跳過本次檢查")
+            return "skipped"
+        
+        # 初始化會話
+        try:
+            self.init_session()
+        except Exception as e:
+            logger.error(f"初始化會話失敗: {e}")
+            return "init_failed"
+        
+        # 只嘗試這三個日期的上午診
+        dates_to_try = [
+            '2025/12/20',
+            '2025/12/27',
+            '2026/01/03',
+        ]
+        
+        logger.info(f"將嘗試以下日期: {dates_to_try}")
+        
+        # 醫師列表 - 只嘗試丁瑋信醫師
+        doctors_to_try = [
+            {'code': '4561', 'name': '丁瑋信'},
+        ]
+        
+        success_count = 0
+        total_attempts = 0
+        
+        for date in dates_to_try:
+            for doctor in doctors_to_try:
+                total_attempts += 1
+                
+                # 準備掛號資料 - 只嘗試上午診 (session: '1')
+                appointment_data = {
+                    'date': date,
+                    'session': '1',  # 只掛上午診
+                    'dept_code': '30',  # 小兒科
+                    'doctor_code': doctor['code'],
+                    'id_number': self.id_number,
+                    'birthday': self.birthday,
+                    'captcha': '',
+                }
+                
+                logger.info(f"嘗試掛號 ({total_attempts}): {date} {doctor['name']} 醫師 上午診")
+                
+                # 執行掛號
+                result = self.make_appointment(appointment_data)
+                
+                # 檢查結果
+                if result.get('success'):
+                    logger.info(f"✓ 成功掛到 {date} {doctor['name']} 醫師 上午診")
+                    logger.info(f"詳細結果: {result}")
+                    
+                    # 發送郵件通知
+                    if self.send_email_notification(result):
+                        # 設置暫停期 - 避免短時間內重複檢查
+                        state = self.load_state()
+                        pause_until = datetime.now() + timedelta(hours=2)  # 暫停2小時
+                        state['pause_until'] = pause_until.isoformat()
+                        state['last_notification_time'] = datetime.now().isoformat()
+                        state['notification_count'] = state.get('notification_count', 0) + 1
+                        self.save_state(state)
+                        logger.info(f"已設置暫停檢查直到: {pause_until.strftime('%Y-%m-%d %H:%M:%S')}")
+                    
+                    success_count += 1
+                    return "success"
+                    
+                elif result.get('full'):
+                    logger.info(f"✗ {date} {doctor['name']} 醫師上午診已滿號")
+                else:
+                    logger.warning(f"? {date} {doctor['name']} 醫師掛號失敗: {result.get('error', '未知錯誤')}")
+                
+                # 避免請求過於頻繁
+                time.sleep(2)
+        
+        logger.info(f"批量掛號完成。共嘗試 {total_attempts} 次，成功 {success_count} 次。")
+        
+        # 保存最後檢查時間
+        state = self.load_state()
+        state['last_check'] = datetime.now().isoformat()
+        self.save_state(state)
+        
+        return "no_availability"
+
+
+def main():
+    """主程式"""
+    logger.info("=== 開始馬偕兒童醫院掛號監控 ===")
+    
+    # 創建掛號器實例
+    registrar = MackayChildHospitalRegistrar()
+    
+    # 執行批量掛號
+    result = registrar.batch_registration()
+    
+    # 記錄結果
+    result_messages = {
+        'skipped': "⏸️ 在暫停期內，跳過檢查",
+        'init_failed': "❌ 初始化會話失敗",
+        'success': "✅ 成功掛號！已發送郵件通知",
+        'no_availability': "❌ 所有嘗試的日期都無可掛號時段",
+    }
+    
+    logger.info(result_messages.get(result, f"執行結果: {result}"))
+    logger.info("=== 馬偕兒童醫院掛號監控結束 ===")
+    
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
