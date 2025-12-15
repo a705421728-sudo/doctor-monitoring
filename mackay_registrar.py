@@ -244,7 +244,12 @@ class MackayChildHospitalRegistrar:
             # 設置發件人
             sender = self.smtp_config.get('sender', self.smtp_config['username'])
             msg['From'] = sender
-            msg['To'] = self.smtp_config['recipient']
+            # 改為支援多個收件人：
+            recipients = self.smtp_config['recipient']
+            # 將郵件地址分割成列表（去除空格）
+            recipient_list = [email.strip() for email in recipients.split(',')]
+            # 設定收件人為逗號分隔的郵件地址
+            msg['To'] = ', '.join(recipient_list)
             
             # 郵件主題
             current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
