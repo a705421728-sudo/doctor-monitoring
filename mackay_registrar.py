@@ -66,7 +66,7 @@ class MackayChildHospitalRegistrar:
             logger.error(f"缺少必要的環境變數: {', '.join(missing_vars)}")
             logger.error("請在 GitHub Secrets 中設置以下變數:")
             logger.error("MACKAY_ID_NUMBER - 身分證字號")
-            logger.error("MACKAY_BIRTHDAY - 生日 (民國年，如 1080612)")
+            logger.error("MACKAY_BIRTHDAY - 生日")
             sys.exit(1)
     
     def load_state(self):
