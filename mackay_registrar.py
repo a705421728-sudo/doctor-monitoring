@@ -178,47 +178,129 @@ class MackayChildHospitalRegistrar:
             return {'success': False, 'error': str(e)}
     
     def parse_result(self, html_content):
-        """解析掛號結果頁面"""
+        """解析掛號結果頁面 - 增強版"""
         try:
+            # 保存HTML用于调试（首次运行时）
+            debug_file = 'last_response.html'
+            with open(debug_file, 'w', encoding='utf-8') as f:
+                f.write(html_content)
+            
             soup = BeautifulSoup(html_content, 'html.parser')
             
-            # 查找掛號結果
-            box_wrapper = soup.find('div', {'id': 'myprint'})
-            if not box_wrapper:
-                return {'success': False, 'error': '無法找到結果區域'}
+            # 尝试查找成功关键词（更全面的判断）
+            page_text = soup.get_text()
             
-            # 提取所有列表項目
-            list_items = box_wrapper.find_all('li')
-            result = {}
-            
-            for item in list_items:
-                text = item.get_text(strip=True)
-                if '看診日期：' in text:
-                    result['appointment_date'] = text.replace('看診日期：', '').strip()
-                elif '看診科別：' in text:
-                    result['department'] = text.replace('看診科別：', '').strip()
-                elif '看診醫師：' in text:
-                    result['doctor'] = text.replace('看診醫師：', '').strip()
-                elif '掛號結果：' in text:
-                    result['status'] = text.replace('掛號結果：', '').strip()
-            
-            # 判斷是否成功
-            if 'status' in result:
-                if '滿號' in result['status'] or '請改掛' in result['status']:
-                    result['success'] = False
-                    result['full'] = True
-                elif '成功' in result['status'] or '已掛號' in result['status']:
+            # 1. 先检查明确的成功关键词
+            success_keywords = ['掛號成功', '預約成功', '掛號完成', '已掛號', '成功掛號']
+            for keyword in success_keywords:
+                if keyword in page_text:
+                    # 提取详细信息
+                    result = self.extract_details_from_page(soup, page_text)
                     result['success'] = True
                     result['full'] = False
-                else:
-                    result['success'] = False
-                    result['full'] = False
+                    return result
             
-            return result
+            # 2. 检查满号信息
+            if '滿號' in page_text or '請改掛' in page_text or '已額滿' in page_text:
+                return {
+                    'success': False,
+                    'full': True,
+                    'status': '已滿號或無可用時段'
+                }
+            
+            # 3. 查找特定的结果区域（原有的逻辑）
+            box_wrapper = soup.find('div', {'id': 'myprint'})
+            if box_wrapper:
+                list_items = box_wrapper.find_all('li')
+                result = {}
+                
+                for item in list_items:
+                    text = item.get_text(strip=True)
+                    if '看診日期：' in text:
+                        result['appointment_date'] = text.replace('看診日期：', '').strip()
+                    elif '看診科別：' in text:
+                        result['department'] = text.replace('看診科別：', '').strip()
+                    elif '看診醫師：' in text:
+                        result['doctor'] = text.replace('看診醫師：', '').strip()
+                    elif '掛號結果：' in text:
+                        result['status'] = text.replace('掛號結果：', '').strip()
+                
+                if 'status' in result:
+                    if '滿號' in result['status'] or '請改掛' in result['status']:
+                        result['success'] = False
+                        result['full'] = True
+                    elif '成功' in result['status'] or '已掛號' in result['status']:
+                        result['success'] = True
+                        result['full'] = False
+                    else:
+                        result['success'] = False
+                        result['full'] = False
+                    return result
+            
+            # 4. 如果以上都没找到，检查页面是否有表单错误信息
+            error_divs = soup.find_all(['div', 'p', 'span'], class_=['error', 'alert', 'warning'])
+            if error_divs:
+                error_msg = ' | '.join([div.get_text(strip=True) for div in error_divs[:3]])
+                return {'success': False, 'error': f'頁面錯誤: {error_msg[:100]}'}
+            
+            # 5. 最后的备选方案：返回原始文本片段供调试
+            text_preview = page_text.replace('\n', ' ').replace('\r', '').strip()[:500]
+            return {
+                'success': False, 
+                'error': f'無法解析結果，頁面內容: {text_preview}...'
+            }
             
         except Exception as e:
             logger.error(f"解析結果失敗: {e}")
-            return {'success': False, 'error': f'解析失敗: {str(e)}'}
+            # 保存错误页面以便分析
+            with open('error_response.html', 'w', encoding='utf-8') as f:
+                f.write(html_content)
+            return {'success': False, 'error': f'解析異常: {str(e)}'}
+    
+    def extract_details_from_page(self, soup, page_text):
+        """從成功頁面提取詳細信息"""
+        result = {}
+        
+        # 方法1：查找所有粗體標籤後面的內容
+        strong_tags = soup.find_all('strong')
+        for tag in strong_tags:
+            tag_text = tag.get_text(strip=True)
+            next_text = ''
+            
+            # 獲取下一個兄弟節點的文本
+            next_sibling = tag.next_sibling
+            while next_sibling and not next_text.strip():
+                if hasattr(next_sibling, 'get_text'):
+                    next_text = next_sibling.get_text(strip=True)
+                elif isinstance(next_sibling, str):
+                    next_text = next_sibling.strip()
+                next_sibling = next_sibling.next_sibling
+            
+            if '日期' in tag_text and not result.get('appointment_date'):
+                result['appointment_date'] = next_text
+            elif '科別' in tag_text and not result.get('department'):
+                result['department'] = next_text
+            elif '醫師' in tag_text and not result.get('doctor'):
+                result['doctor'] = next_text
+        
+        # 方法2：使用正則表達式提取常見格式
+        import re
+        patterns = [
+            (r'看診日期[：:]?\s*([^\s]+)', 'appointment_date'),
+            (r'科別[：:]?\s*([^\s]+)', 'department'),
+            (r'醫師[：:]?\s*([^\s]+)', 'doctor'),
+            (r'(\d{4}[-/]\d{1,2}[-/]\d{1,2})', 'appointment_date'),
+        ]
+        
+        for pattern, key in patterns:
+            match = re.search(pattern, page_text)
+            if match and not result.get(key):
+                result[key] = match.group(1)
+        
+        # 設置默認狀態
+        result['status'] = '掛號成功'
+        
+        return result
     
     def send_email_notification(self, appointment_result):
         """發送郵件通知"""
@@ -314,7 +396,8 @@ class MackayChildHospitalRegistrar:
                     'captcha': '',
                 }
                 
-                logger.info(f"嘗試掛號 ({total_attempts}): {date} {doctor['name']} 醫師 上午診")
+                session_name = "上午診" if appointment_data['session'] == '1' else "下午診"
+                logger.info(f"嘗試掛號 ({total_attempts}): {date} {doctor['name']} 醫師 {session_name}")
                 
                 # 執行掛號
                 result = self.make_appointment(appointment_data)
@@ -381,9 +464,4 @@ def main():
 
 
 if __name__ == "__main__":
-
     sys.exit(main())
-
-
-
-
