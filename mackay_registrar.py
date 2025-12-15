@@ -302,7 +302,7 @@ class MackayChildHospitalRegistrar:
         
         # 每個日期可以指定不同的時段
         appointments_to_try = [
-            {'date': '2025/12/17', 'session': '2', 'session_name': '下午診'},
+            #{'date': '2025/12/17', 'session': '2', 'session_name': '下午診'},
             {'date': '2025/12/20', 'session': '1', 'session_name': '上午診'},
             {'date': '2025/12/27', 'session': '1', 'session_name': '上午診'},
             {'date': '2026/01/03', 'session': '1', 'session_name': '上午診'},
@@ -406,4 +406,5 @@ def main():
 
 
 if __name__ == "__main__":
+
     sys.exit(main())
