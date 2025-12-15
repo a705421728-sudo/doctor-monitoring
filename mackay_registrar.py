@@ -285,7 +285,7 @@ class MackayChildHospitalRegistrar:
         # 只嘗試這三個日期的上午診
         dates_to_try = [
             '2025/12/20',
-            '2025/12/27',
+            '2025/12/17',
             '2026/01/03',
         ]
         
@@ -306,7 +306,7 @@ class MackayChildHospitalRegistrar:
                 # 準備掛號資料 - 只嘗試上午診 (session: '1')
                 appointment_data = {
                     'date': date,
-                    'session': '1',  # 只掛上午診
+                    'session': '2',  # 只掛上午診
                     'dept_code': '30',  # 小兒科
                     'doctor_code': doctor['code'],
                     'id_number': self.id_number,
@@ -381,4 +381,5 @@ def main():
 
 
 if __name__ == "__main__":
+
     sys.exit(main())
