@@ -6,10 +6,6 @@ on:
     # 每5分鐘執行一次
     - cron: '*/5 * * * *'
 
-concurrency:
-  group: ${{ github.workflow }}
-  cancel-in-progress: false  # 重要：允許並行執行，不取消進行中的任務
-
 jobs:
   run_auto_register:
     runs-on: ubuntu-latest
@@ -20,54 +16,70 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2. 下載上次的狀態文件（如果存在）
-      - name: Download previous state
-        uses: actions/download-artifact@v4
-        with:
-          name: mackay-logs
-          path: ./
-        continue-on-error: true  # 如果首次運行沒有檔案，繼續執行
+      # 2. 安裝 GitHub CLI（用於檢查產物）
+      - name: Setup GitHub CLI
+        run: |
+          type -p curl >/dev/null || (sudo apt update && sudo apt install curl -y)
+          curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
+          sudo apt update
+          sudo apt install gh -y
 
-      # 3. 設置Python環境
+      # 3. 嘗試下載上次的狀態文件（如果存在）
+      - name: Download previous state
+        run: |
+          echo "檢查歷史狀態文件..."
+          # 更簡潔的方法：直接嘗試下載，忽略錯誤
+          gh run download --name="mackay-logs" --dir=. 2>/dev/null || echo "無歷史狀態文件，將創建新文件"
+          ls -la *.json *.log 2>/dev/null || echo "當前無狀態文件"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true
+
+      # 4. 設置Python環境
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
 
-      # 4. 安裝依賴
+      # 5. 安裝依賴
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          if [ -f "requirements.txt" ]; then
+            pip install -r requirements.txt
+          else
+            pip install requests beautifulsoup4
+          fi
 
-      # 5. 執行掛號腳本
+      # 6. 執行掛號腳本
       - name: Run Mackay auto register script
         env:
-          # 個人資料（必要）
           MACKAY_ID_NUMBER: ${{ secrets.MACKAY_ID_NUMBER }}
           MACKAY_BIRTHDAY: ${{ secrets.MACKAY_BIRTHDAY }}
-          
-          # 郵件配置（可選，用於發送成功通知）
+          MACKAY_NOTIFICATION_EMAIL: ${{ secrets.MACKAY_NOTIFICATION_EMAIL }}
           SMTP_SERVER: ${{ secrets.SMTP_SERVER }}
           SMTP_PORT: ${{ secrets.SMTP_PORT }}
           SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
           SMTP_SENDER: ${{ secrets.SMTP_SENDER }}
-          MACKAY_NOTIFICATION_EMAIL: ${{ secrets.MACKAY_NOTIFICATION_EMAIL }}
         run: |
-          echo "=== 本次執行開始 ==="
-          echo "當前時間: $(date)"
-          # 檢查狀態文件是否存在
+          echo "=== 掛號監控開始 ==="
+          echo "執行時間: $(date)"
+          
+          # 顯示當前狀態（調試用）
           if [ -f "mackay_state.json" ]; then
-            echo "找到狀態文件，內容:"
-            cat mackay_state.json
+            echo "狀態文件存在"
           else
-            echo "未找到狀態文件（首次執行或文件丟失）"
+            echo "狀態文件不存在（正常首次執行）"
           fi
-          echo "開始執行掛號腳本..."
+          
+          # 執行主程序
           python mackay_registrar.py
+          
+          echo "=== 掛號監控結束 ==="
 
-      # 6. 上傳本次的日誌和狀態
+      # 7. 上傳本次的日誌和狀態
       - name: Upload logs and state
         uses: actions/upload-artifact@v4
         with:
@@ -76,4 +88,4 @@ jobs:
             mackay_register.log
             mackay_state.json
           retention-days: 7
-          overwrite: true  # 重要：覆蓋上次的文件
+          overwrite: true
