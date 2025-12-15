@@ -24,18 +24,24 @@ jobs:
         run: |
           python -m pip install --upgrade pip
 
-      - name: 执行安全验证
-        env:
-          # 注入所有必要的Secrets
-          MACKAY_ID_NUMBER: ${{ secrets.MACKAY_ID_NUMBER }}
-          MACKAY_BIRTHDAY: ${{ secrets.MACKAY_BIRTHDAY }}
-          MACKAY_NOTIFICATION_EMAIL: ${{ secrets.MACKAY_NOTIFICATION_EMAIL }}
-          SMTP_SERVER: ${{ secrets.SMTP_SERVER }}
-          SMTP_PORT: ${{ secrets.SMTP_PORT }}
-          SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
-          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
-          SMTP_SENDER: ${{ secrets.SMTP_SENDER }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-          GITHUB_RUN_ID: ${{ github.run_id }}
-        run: |
-          python verify_config.py
+    - name: 执行安全验证
+      env:
+        # 注入所有必要的Secrets（保持不变）
+        MACKAY_ID_NUMBER: ${{ secrets.MACKAY_ID_NUMBER }}
+        MACKAY_BIRTHDAY: ${{ secrets.MACKAY_BIRTHDAY }}
+        MACKAY_NOTIFICATION_EMAIL: ${{ secrets.MACKAY_NOTIFICATION_EMAIL }}
+        SMTP_SERVER: ${{ secrets.SMTP_SERVER }}
+        SMTP_PORT: ${{ secrets.SMTP_PORT }}
+        SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+        SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+        SMTP_SENDER: ${{ secrets.SMTP_SENDER }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
+        GITHUB_RUN_ID: ${{ github.run_id }}
+      run: |
+        # 首先测试SMTP连接
+        echo "=== 第一阶段：SMTP连接诊断 ==="
+        python test_smtp.py
+        
+        echo -e "\n=== 第二阶段：完整配置验证 ==="
+        # 如果SMTP测试失败，这里会直接退出
+        python verify_config.py
