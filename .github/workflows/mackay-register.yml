@@ -3,89 +3,50 @@ name: Mackay Children Hospital Auto Register
 on:
   workflow_dispatch:  # 手動觸發
   schedule:
-    # 每5分鐘執行一次
-    - cron: '*/5 * * * *'
+    # 改為每10分鐘執行一次（與榮總一致，確保可靠）
+    - cron: '*/10 * * * *'
+
+# 添加並行控制，防止重疊執行
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
 
 jobs:
   run_auto_register:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # 縮短超時時間，避免長時間運行佔用資源
+    timeout-minutes: 5
 
     steps:
-      # 1. 獲取代碼
+      # 1. 獲取代碼（使用與榮總相同的 v3 版本）
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v3
 
-      # 2. 安裝 GitHub CLI（用於檢查產物）
-      - name: Setup GitHub CLI
-        run: |
-          type -p curl >/dev/null || (sudo apt update && sudo apt install curl -y)
-          curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
-          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
-          sudo apt update
-          sudo apt install gh -y
-
-      # 3. 嘗試下載上次的狀態文件（如果存在）
-      - name: Download previous state
-        run: |
-          echo "檢查歷史狀態文件..."
-          # 更簡潔的方法：直接嘗試下載，忽略錯誤
-          gh run download --name="mackay-logs" --dir=. 2>/dev/null || echo "無歷史狀態文件，將創建新文件"
-          ls -la *.json *.log 2>/dev/null || echo "當前無狀態文件"
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        continue-on-error: true
-
-      # 4. 設置Python環境
+      # 2. 設置Python環境
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
 
-      # 5. 安裝依賴
+      # 3. 安裝依賴（精簡版）
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          if [ -f "requirements.txt" ]; then
-            pip install -r requirements.txt
-          else
-            pip install requests beautifulsoup4
-          fi
+          pip install requests beautifulsoup4
 
-      # 6. 執行掛號腳本
+      # 4. 執行掛號腳本（核心步驟）
       - name: Run Mackay auto register script
         env:
+          # 僅注入必要變數（移除SMTP相關，先確保核心功能）
           MACKAY_ID_NUMBER: ${{ secrets.MACKAY_ID_NUMBER }}
           MACKAY_BIRTHDAY: ${{ secrets.MACKAY_BIRTHDAY }}
-          MACKAY_NOTIFICATION_EMAIL: ${{ secrets.MACKAY_NOTIFICATION_EMAIL }}
-          SMTP_SERVER: ${{ secrets.SMTP_SERVER }}
-          SMTP_PORT: ${{ secrets.SMTP_PORT }}
-          SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
-          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
-          SMTP_SENDER: ${{ secrets.SMTP_SENDER }}
+          # 郵件配置暫時移除，先測試調度
         run: |
-          echo "=== 掛號監控開始 ==="
+          echo "🏥 馬偕掛號監控啟動"
           echo "執行時間: $(date)"
-          
-          # 顯示當前狀態（調試用）
-          if [ -f "mackay_state.json" ]; then
-            echo "狀態文件存在"
-          else
-            echo "狀態文件不存在（正常首次執行）"
-          fi
+          echo "事件觸發: ${{ github.event_name }}"
           
           # 執行主程序
           python mackay_registrar.py
           
-          echo "=== 掛號監控結束 ==="
-
-      # 7. 上傳本次的日誌和狀態
-      - name: Upload logs and state
-        uses: actions/upload-artifact@v4
-        with:
-          name: mackay-logs
-          path: |
-            mackay_register.log
-            mackay_state.json
-          retention-days: 7
-          overwrite: true
+          echo "✅ 本次執行完成"
