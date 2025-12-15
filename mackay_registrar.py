@@ -470,7 +470,7 @@ class MackayChildHospitalRegistrar:
                 # 準備掛號資料 - 只嘗試上午診 (session: '1')
                 appointment_data = {
                     'date': date,
-                    'session': '1',  # 修正：上午診代碼為'1'，不是'2'
+                    'session': '2',  # 修正：上午診代碼為'1'，不是'2'
                     'dept_code': '30',  # 小兒科
                     'doctor_code': doctor['code'],
                     'id_number': self.id_number,
@@ -552,4 +552,5 @@ def main():
 
 
 if __name__ == "__main__":
+
     sys.exit(main())
