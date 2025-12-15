@@ -34,17 +34,10 @@ jobs:
         SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
         SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
         SMTP_SENDER: ${{ secrets.SMTP_SENDER }}
+        GITHUB_ACTIONS: 'true'  # 設置標誌表示在 GitHub Actions 環境中
       run: |
         echo "🏥 馬偕掛號監控啟動"
         echo "執行時間: $(date)"
         echo "事件觸發: ${{ github.event_name }}"
         python mackay_registrar.py
-    
-    - name: 上傳日誌文件
-      if: always()
-      uses: actions/upload-artifact@v4 # <-- Updated to v4
-      with:
-        name: mackay-register-logs
-        path: |
-          mackay_register.log
-          mackay_state.json
+        echo "執行完成"
