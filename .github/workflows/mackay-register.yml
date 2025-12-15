@@ -3,12 +3,12 @@ name: Mackay Children Hospital Auto Register
 on:
   workflow_dispatch:  # 手動觸發
   schedule:
-    # 每5分鐘執行一次（比之前更頻繁）
+    # 每5分鐘執行一次
     - cron: '*/5 * * * *'
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: false
+  group: ${{ github.workflow }}
+  cancel-in-progress: false  # 重要：允許並行執行，不取消進行中的任務
 
 jobs:
   run_auto_register:
@@ -16,19 +16,31 @@ jobs:
     timeout-minutes: 10
 
     steps:
+      # 1. 獲取代碼
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
+      # 2. 下載上次的狀態文件（如果存在）
+      - name: Download previous state
+        uses: actions/download-artifact@v4
+        with:
+          name: mackay-logs
+          path: ./
+        continue-on-error: true  # 如果首次運行沒有檔案，繼續執行
+
+      # 3. 設置Python環境
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
 
+      # 4. 安裝依賴
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      # 5. 執行掛號腳本
       - name: Run Mackay auto register script
         env:
           # 個人資料（必要）
@@ -43,12 +55,25 @@ jobs:
           SMTP_SENDER: ${{ secrets.SMTP_SENDER }}
           MACKAY_NOTIFICATION_EMAIL: ${{ secrets.MACKAY_NOTIFICATION_EMAIL }}
         run: |
+          echo "=== 本次執行開始 ==="
+          echo "當前時間: $(date)"
+          # 檢查狀態文件是否存在
+          if [ -f "mackay_state.json" ]; then
+            echo "找到狀態文件，內容:"
+            cat mackay_state.json
+          else
+            echo "未找到狀態文件（首次執行或文件丟失）"
+          fi
+          echo "開始執行掛號腳本..."
           python mackay_registrar.py
-          
-      - name: Upload logs
-        uses: actions/upload-artifact@v4 # 修改为 v4
+
+      # 6. 上傳本次的日誌和狀態
+      - name: Upload logs and state
+        uses: actions/upload-artifact@v4
         with:
           name: mackay-logs
           path: |
             mackay_register.log
             mackay_state.json
+          retention-days: 7
+          overwrite: true  # 重要：覆蓋上次的文件
