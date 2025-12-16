@@ -322,8 +322,8 @@ class MackayChildHospitalRegistrar:
             logger.info(f"  {appt['date']} {appt['session_name']}")
         
         # 簡單重試機制：在單次執行中嘗試3輪
-        for retry_round in range(1, 4):  # 總共嘗試3輪
-            logger.info(f"=== 第 {retry_round}/3 輪嘗試 ===")
+        for retry_round in range(1, 6):  # 總共嘗試3輪
+            logger.info(f"=== 第 {retry_round}/5 輪嘗試 ===")
             
             success_count = 0
             total_attempts = 0
@@ -374,11 +374,11 @@ class MackayChildHospitalRegistrar:
                     time.sleep(2)
             
             # 如果不是最後一輪，等待3分鐘再試下一輪
-            if retry_round < 3:
-                logger.info(f"等待3分鐘後進行第 {retry_round+1}/3 輪嘗試...")
+            if retry_round < 5:
+                logger.info(f"等待3分鐘後進行第 {retry_round+1}/5 輪嘗試...")
                 time.sleep(180)  # 3分鐘
         
-        logger.info(f"批量掛號完成。共嘗試3輪，無可掛號時段。")
+        logger.info(f"批量掛號完成。共嘗試5輪，無可掛號時段。")
         return "no_availability"
 
 
