@@ -2,8 +2,8 @@ name: 馬偕兒童醫院掛號監控
 
 on:
   schedule:
-    # 每5分鐘執行一次
-    - cron: '*/5 * * * *'
+    # 每15分鐘執行一次（配合內部3輪重試）
+    - cron: '*/15 * * * *'
   workflow_dispatch:  # 允許手動觸發
 
 jobs:
@@ -34,7 +34,7 @@ jobs:
         SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
         SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
         SMTP_SENDER: ${{ secrets.SMTP_SENDER }}
-        GITHUB_ACTIONS: 'true'  # 設置標誌表示在 GitHub Actions 環境中
+        GITHUB_ACTIONS: 'true'
       run: |
         echo "🏥 馬偕掛號監控啟動"
         echo "執行時間: $(date)"
