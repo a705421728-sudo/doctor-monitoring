@@ -1,20 +1,23 @@
-name: 馬偕兒童醫院掛號監控
+name: 馬偕兒童醫院掛號監控 (長效版)
 
 on:
   schedule:
-    - cron: '*/10 * * * *'
+    # 每天每 3 小時觸發一次 (UTC 時間 0, 3, 6, 9, 12, 15, 18, 21)
+    - cron: '5 */3 * * *'
   workflow_dispatch:
   push:
     branches: [ main ]
 
-# 防止併發執行 - 重要
+# 重要：確保同一時間只有一個監控在跑
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: false  # 不要取消正在執行的，讓新的跳過
+  group: mackay-monitor
+  cancel-in-progress: true 
 
 jobs:
   mackay-register:
+    # 必須是公開 Repository 才能享受無限制的免費額度
     runs-on: ubuntu-latest
+    timeout-minutes: 200 # 設定稍微大於 180 分鐘作為保險
     
     steps:
     - name: 檢出代碼
@@ -30,20 +33,6 @@ jobs:
         python -m pip install --upgrade pip
         pip install requests beautifulsoup4
     
-    - name: 調試信息
-      run: |
-        echo "=== GitHub Actions 調試信息 ==="
-        echo "執行時間: $(date)"
-        echo "UTC時間: $(date -u)"
-        echo "事件類型: ${{ github.event_name }}"
-        echo "是否排程觸發: ${{ github.event_name == 'schedule' }}"
-        echo "工作流程: ${{ github.workflow }}"
-        echo "倉庫: ${{ github.repository }}"
-        echo "觸發器: ${{ toJson(github.event) }}"
-        echo "當前目錄: $(pwd)"
-        echo "文件列表:"
-        ls -la
-    
     - name: 執行掛號監控
       env:
         MACKAY_ID_NUMBER: ${{ secrets.MACKAY_ID_NUMBER }}
@@ -54,10 +43,6 @@ jobs:
         SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
         SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
         SMTP_SENDER: ${{ secrets.SMTP_SENDER }}
-        GITHUB_ACTIONS: 'true'
       run: |
-        echo "🏥 馬偕掛號監控啟動"
-        echo "開始執行時間: $(date)"
+        echo "🏥3小時連續監控啟動"
         python mackay_registrar.py
-        echo "結束執行時間: $(date)"
-        echo "執行完成"
