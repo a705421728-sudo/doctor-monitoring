@@ -7,7 +7,7 @@ on:
   push:
     branches: [ main ]
 
-# 防止併發執行 - 重要！
+# 防止併發執行 - 重要
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false  # 不要取消正在執行的，讓新的跳過
