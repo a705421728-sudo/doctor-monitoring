@@ -224,7 +224,7 @@ class MackayChildHospitalRegistrar:
             return {'success': False, 'error': f'解析異常: {str(e)}'}
     
     def send_email_notification(self, appointment_result):
-        """發送郵件通知"""
+        """發送郵件通知 - 修正多個收件人問題"""
         try:
             # 檢查郵件配置是否完整
             required_configs = ['server', 'username', 'password', 'recipient']
@@ -244,11 +244,10 @@ class MackayChildHospitalRegistrar:
             # 設置發件人
             sender = self.smtp_config.get('sender', self.smtp_config['username'])
             msg['From'] = sender
-            # 改為支援多個收件人：
+            
+            # 處理多個收件人
             recipients = self.smtp_config['recipient']
-            # 將郵件地址分割成列表（去除空格）
             recipient_list = [email.strip() for email in recipients.split(',')]
-            # 設定收件人為逗號分隔的郵件地址
             msg['To'] = ', '.join(recipient_list)
             
             # 郵件主題
@@ -275,15 +274,17 @@ class MackayChildHospitalRegistrar:
             
             msg.attach(MIMEText(body, 'plain', 'utf-8'))
             
-            # 發送郵件
-            logger.info(f"正在發送郵件通知...")
+            # 發送郵件 - 修正: 使用 sendmail 而不是 send_message
+            logger.info(f"正在發送郵件通知給 {len(recipient_list)} 個收件人...")
             server = smtplib.SMTP(self.smtp_config['server'], self.smtp_config['port'])
             server.starttls()
             server.login(self.smtp_config['username'], self.smtp_config['password'])
-            server.send_message(msg)
+            
+            # 使用 sendmail 確保所有收件人都能收到
+            server.sendmail(sender, recipient_list, msg.as_string())
             server.quit()
             
-            logger.info("郵件通知已發送")
+            logger.info(f"郵件通知已發送給 {len(recipient_list)} 個收件人")
             self.notification_sent = True
             return True
             
@@ -292,7 +293,7 @@ class MackayChildHospitalRegistrar:
             return False
     
     def batch_registration(self):
-        """批量掛號 - 可為每個日期指定時段"""
+        """批量掛號 - 添加簡單重試機制"""
         # 初始化會話
         try:
             self.init_session()
@@ -306,72 +307,78 @@ class MackayChildHospitalRegistrar:
             {'date': '2025/12/20', 'session': '1', 'session_name': '上午診'},
             {'date': '2025/12/27', 'session': '1', 'session_name': '上午診'},
             {'date': '2026/01/03', 'session': '1', 'session_name': '上午診'},
+            {'date': '2026/01/10', 'session': '1', 'session_name': '上午診'},
+            {'date': '2026/01/17', 'session': '1', 'session_name': '上午診'},
+            {'date': '2026/01/24', 'session': '1', 'session_name': '上午診'},
         ]
-        
-        logger.info(f"將嘗試以下掛號時段:")
-        for appt in appointments_to_try:
-            logger.info(f"  {appt['date']} {appt['session_name']}")
         
         # 醫師列表
         doctors_to_try = [
             {'code': '4561', 'name': '丁瑋信'},
         ]
         
-        success_count = 0
-        total_attempts = 0
+        logger.info(f"將嘗試以下掛號時段:")
+        for appt in appointments_to_try:
+            logger.info(f"  {appt['date']} {appt['session_name']}")
         
-        for appointment in appointments_to_try:
-            for doctor in doctors_to_try:
-                total_attempts += 1
-                
-                # 準備掛號資料
-                appointment_data = {
-                    'date': appointment['date'],
-                    'session': appointment['session'],
-                    'session_name': appointment['session_name'],
-                    'dept_code': '30',  # 小兒科
-                    'doctor_code': doctor['code'],
-                    'id_number': self.id_number,
-                    'birthday': self.birthday,
-                    'captcha': '',
-                }
-                
-                logger.info(f"嘗試掛號 ({total_attempts}): {appointment['date']} {doctor['name']} 醫師 {appointment['session_name']}")
-                
-                # 執行掛號
-                result = self.make_appointment(appointment_data)
-                
-                # 檢查結果
-                if result.get('success'):
-                    logger.info(f"✓ 成功掛到 {appointment['date']} {doctor['name']} 醫師 {appointment['session_name']}")
+        # 簡單重試機制：在單次執行中嘗試3輪
+        for retry_round in range(1, 4):  # 總共嘗試3輪
+            logger.info(f"=== 第 {retry_round}/3 輪嘗試 ===")
+            
+            success_count = 0
+            total_attempts = 0
+            
+            for appointment in appointments_to_try:
+                for doctor in doctors_to_try:
+                    total_attempts += 1
                     
-                    # 發送郵件通知
-                    email_sent = self.send_email_notification(result)
+                    # 準備掛號資料
+                    appointment_data = {
+                        'date': appointment['date'],
+                        'session': appointment['session'],
+                        'session_name': appointment['session_name'],
+                        'dept_code': '30',  # 小兒科
+                        'doctor_code': doctor['code'],
+                        'id_number': self.id_number,
+                        'birthday': self.birthday,
+                        'captcha': '',
+                    }
                     
-                    if email_sent:
-                        logger.info("郵件通知已發送")
-                    else:
-                        logger.warning("郵件發送失敗")
+                    logger.info(f"嘗試掛號 ({total_attempts}): {appointment['date']} {doctor['name']} 醫師 {appointment['session_name']}")
                     
-                    success_count += 1
+                    # 執行掛號
+                    result = self.make_appointment(appointment_data)
                     
-                    # 如果在 GitHub Actions 中，成功後直接退出程序
-                    if os.getenv('GITHUB_ACTIONS'):
-                        logger.info("在 GitHub Actions 環境中，掛號成功後退出")
-                        return "success_and_exit"
-                    else:
+                    # 檢查結果
+                    if result.get('success'):
+                        logger.info(f"✓ 成功掛到 {appointment['date']} {doctor['name']} 醫師 {appointment['session_name']}")
+                        
+                        # 發送郵件通知
+                        email_sent = self.send_email_notification(result)
+                        
+                        if email_sent:
+                            logger.info("郵件通知已發送")
+                        else:
+                            logger.warning("郵件發送失敗")
+                        
+                        success_count += 1
                         return "success"
+                        
+                    elif result.get('full'):
+                        logger.info(f"✗ {appointment['date']} {doctor['name']} 醫師{appointment['session_name']}已滿號")
+                    else:
+                        error_msg = result.get('error', '未知錯誤')
+                        logger.info(f"✗ {appointment['date']} {doctor['name']} 醫師掛號失敗: {error_msg}")
                     
-                elif result.get('full'):
-                    logger.info(f"✗ {appointment['date']} {doctor['name']} 醫師{appointment['session_name']}已滿號")
-                else:
-                    error_msg = result.get('error', '未知錯誤')
-                    logger.info(f"✗ {appointment['date']} {doctor['name']} 醫師掛號失敗: {error_msg}")
-                
-                # 避免請求過於頻繁
-                time.sleep(2)
+                    # 避免請求過於頻繁
+                    time.sleep(2)
+            
+            # 如果不是最後一輪，等待3分鐘再試下一輪
+            if retry_round < 3:
+                logger.info(f"等待3分鐘後進行第 {retry_round+1}/3 輪嘗試...")
+                time.sleep(180)  # 3分鐘
         
-        logger.info(f"批量掛號完成。共嘗試 {total_attempts} 次，成功 {success_count} 次。")
+        logger.info(f"批量掛號完成。共嘗試3輪，無可掛號時段。")
         return "no_availability"
 
 
@@ -406,5 +413,4 @@ def main():
 
 
 if __name__ == "__main__":
-
     sys.exit(main())
