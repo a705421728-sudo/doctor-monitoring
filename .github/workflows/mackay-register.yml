@@ -3,7 +3,7 @@ name: 馬偕兒童醫院掛號監控
 on:
   schedule:
     # 每15分鐘執行一次（配合內部5輪重試）
-    - cron: '*/15 * * * *'
+    - cron: '*/10 * * * *'
   workflow_dispatch:  # 允許手動觸發
 
 jobs:
