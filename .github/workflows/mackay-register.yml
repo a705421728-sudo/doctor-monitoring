@@ -2,9 +2,11 @@ name: 馬偕兒童醫院掛號監控
 
 on:
   schedule:
-    # 每15分鐘執行一次（配合內部5輪重試）
+    # 每10分鐘執行一次
     - cron: '*/10 * * * *'
   workflow_dispatch:  # 允許手動觸發
+  push:  # 添加 push 觸發，方便測試
+    branches: [ main ]
 
 jobs:
   mackay-register:
@@ -24,6 +26,20 @@ jobs:
         python -m pip install --upgrade pip
         pip install requests beautifulsoup4
     
+    - name: 調試信息
+      run: |
+        echo "=== GitHub Actions 調試信息 ==="
+        echo "執行時間: $(date)"
+        echo "UTC時間: $(date -u)"
+        echo "事件類型: ${{ github.event_name }}"
+        echo "是否排程觸發: ${{ github.event_name == 'schedule' }}"
+        echo "工作流程: ${{ github.workflow }}"
+        echo "倉庫: ${{ github.repository }}"
+        echo "觸發器: ${{ toJson(github.event) }}"
+        echo "當前目錄: $(pwd)"
+        echo "文件列表:"
+        ls -la
+    
     - name: 執行掛號監控
       env:
         MACKAY_ID_NUMBER: ${{ secrets.MACKAY_ID_NUMBER }}
@@ -37,7 +53,7 @@ jobs:
         GITHUB_ACTIONS: 'true'
       run: |
         echo "🏥 馬偕掛號監控啟動"
-        echo "執行時間: $(date)"
-        echo "事件觸發: ${{ github.event_name }}"
+        echo "開始執行時間: $(date)"
         python mackay_registrar.py
+        echo "結束執行時間: $(date)"
         echo "執行完成"
