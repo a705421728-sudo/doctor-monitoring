@@ -2,11 +2,15 @@ name: 馬偕兒童醫院掛號監控
 
 on:
   schedule:
-    # 每10分鐘執行一次
     - cron: '*/15 * * * *'
-  workflow_dispatch:  # 允許手動觸發
-  push:  # 添加 push 觸發，方便測試
+  workflow_dispatch:
+  push:
     branches: [ main ]
+
+# 防止併發執行 - 重要！
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false  # 不要取消正在執行的，讓新的跳過
 
 jobs:
   mackay-register:
